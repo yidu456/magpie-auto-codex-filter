@@ -8,7 +8,7 @@ if errorlevel 1 (
 )
 chcp 65001 >nul
 title Magpie Conditional Codex Filter - Live Requests
-node "%~dp0filter.cjs" logs %*
+node "%~dp0magpie-auto-codex-filter\filter.cjs" logs %*
 set "filterExit=%errorlevel%"
 echo.
 pause

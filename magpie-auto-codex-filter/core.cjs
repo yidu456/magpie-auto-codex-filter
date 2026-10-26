@@ -8,8 +8,7 @@ const net = require('node:net');
 const {spawn} = require('node:child_process');
 const {randomBytes} = require('node:crypto');
 const {SERVICE, MAGPIE_SERVICE, MAGPIE_CCS_SERVICE, MAGPIE_AUTO_SERVICE, serviceForMode, ADMIN, makeProxy, localOrigin} = require('./proxy.cjs');
-const {ConfigRouter, discoverCcSwitch} = require('./config.cjs');
-const {resolvePolicy} = require('./policy.cjs');
+const {ConfigRouter, discoverCcSwitch} = require('./base-config.cjs');
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const LOG_MAX_BYTES = 4 * 1024 * 1024;
@@ -52,8 +51,7 @@ function request(origin, route, token, method = 'GET') {
       res.on('end', () => {
         try {
           const result = JSON.parse(body);
-          if (res.statusCode !== 200) throw Object.assign(new Error(result.error?.message || 'Local service returned HTTP ' + res.statusCode),
-            {code: result.error?.code, status: res.statusCode});
+          if (res.statusCode !== 200) throw new Error(result.error?.message || 'Local service returned HTTP ' + res.statusCode);
           resolve(result);
         } catch (error) { reject(error); }
       });
@@ -98,48 +96,45 @@ function conflictMessage(conflict) {
 }
 function parseArgs(argv) {
   const command = (argv.shift() || 'help').toLowerCase();
-  if (!['help', 'start', 'serve', 'stop', 'idle-stop', 'status', 'logs'].includes(command)) throw new Error('Use start, stop, idle-stop, status, logs or serve.');
+  if (!['help', 'start', 'serve', 'stop', 'status', 'logs'].includes(command)) throw new Error('Use start, stop, status, logs or serve.');
   const values = {};
-  const names = new Set(['port', 'upstream', 'config', 'runtime', 'cc-db', 'mode', 'gateway', 'cleanup']);
+  const names = new Set(['port', 'upstream', 'config', 'runtime', 'cc-db', 'mode']);
   while (argv.length) {
     const key = argv.shift();
     if (!key.startsWith('--') || !names.has(key.slice(2)) || !argv.length) throw new Error('Invalid option: ' + key);
     values[key.slice(2)] = argv.shift();
   }
   const port = Number(values.port || 18181);
-  const mode = values.mode ?? (values.gateway === undefined && values.cleanup === undefined ? 'ccswitch' : undefined);
-  const policy = resolvePolicy({...values, mode});
+  const mode = values.mode || 'ccswitch';
+  if (!['ccswitch', 'magpie', 'magpie-ccs', 'magpie-auto'].includes(mode)) throw new Error('Mode must be ccswitch, magpie, magpie-ccs or magpie-auto.');
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Port must be an integer between 1024 and 65535.');
   const configHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
-  return {command, port, mode, ...policy, filterOrigin: 'http://127.0.0.1:' + port,
+  return {command, port, mode, filterOrigin: 'http://127.0.0.1:' + port,
     configPath: path.resolve(values.config || path.join(configHome, 'config.toml')),
     runtime: path.resolve(values.runtime || path.join(__dirname, '.runtime')),
     databasePath: values['cc-db'] && path.resolve(values['cc-db']),
-    upstream: values.upstream ? localOrigin(values.upstream) : policy.gateway === 'magpie' ? 'http://127.0.0.1:3425' : undefined};
+    upstream: values.upstream ? localOrigin(values.upstream) : mode !== 'ccswitch' ? 'http://127.0.0.1:3425' : undefined};
 }
 function files(options) {
   return {state: path.join(options.runtime, 'service.json'), backup: path.join(options.runtime, 'routes.json'),
     log: path.join(options.runtime, 'filter.log')};
 }
 function routerFor(options, backup, getUpstream, log) {
-  const {gateway} = resolvePolicy(options);
-  const Router = gateway === 'magpie' ? require('./magpie-config.cjs').ConfigRouter : ConfigRouter;
+  const Router = options.mode?.startsWith('magpie') ? require('./config.cjs').ConfigRouter : ConfigRouter;
   return new Router({configPath: options.configPath, filterOrigin: options.filterOrigin,
-    backupPath: backup, getUpstream, mode: options.mode || gateway, log});
+    backupPath: backup, getUpstream, mode: options.mode, log});
 }
 function removeOwnState(filename, instance) {
   if (jsonFile(filename)?.instance === instance) fs.unlinkSync(filename);
 }
 async function serve(options) {
-  const policy = resolvePolicy(options);
   const locations = files(options);
   fs.mkdirSync(options.runtime, {recursive: true});
-  const getUpstream = () => options.upstream || (policy.gateway === 'magpie' ? 'http://127.0.0.1:3425' : discoverCcSwitch(options.databasePath));
-  let upstream = getUpstream();
-  const upstreamName = policy.gateway === 'magpie' ? 'Magpie' : 'CC Switch';
+  let upstream = options.upstream || discoverCcSwitch(options.databasePath);
+  const upstreamName = options.mode?.startsWith('magpie') ? 'Magpie' : 'CC Switch';
   if (new URL(upstream).port === String(options.port)) throw new Error('Filter port must differ from ' + upstreamName + ' port.');
   const instance = randomBytes(12).toString('hex');
-  const record = {service: serviceForMode(options.mode || policy.gateway), pid: process.pid, instance, token: randomBytes(32).toString('hex'),
+  const record = {service: serviceForMode(options.mode), pid: process.pid, instance, token: randomBytes(32).toString('hex'),
     filterOrigin: options.filterOrigin, configPath: options.configPath, startedAt: new Date().toISOString()};
   const previous = jsonFile(locations.state);
   if (previous) {
@@ -151,7 +146,7 @@ async function serve(options) {
   let router, server, timer, logTimer, stopping = false, lastError = null;
   pruneLog(locations.log);
   const log = (event, data = {}) => {
-    const line = JSON.stringify({time: new Date().toISOString(), event, mode: options.mode || policy.gateway, ...policy, ...data});
+    const line = JSON.stringify({time: new Date().toISOString(), event, mode: options.mode || 'ccswitch', ...data});
     fs.appendFileSync(locations.log, line + '\n');
     if (fs.statSync(locations.log).size > LOG_MAX_BYTES) pruneLog(locations.log);
     console.log(line);
@@ -174,7 +169,7 @@ async function serve(options) {
   };
   try {
     router = routerFor(options, locations.backup, () => upstream, log);
-    server = makeProxy({getUpstream: () => upstream, mode: options.mode, ...policy, token: record.token, onStop: shutdown, log,
+    server = makeProxy({getUpstream: () => upstream, mode: options.mode, token: record.token, onStop: shutdown, log,
       getState: () => ({instance, state: stopping ? 'stopping' : router.state, upstream,
         filterOrigin: options.filterOrigin, configPath: options.configPath, lastError,
         logPolicy: {retentionHours: 24, maxBytes: LOG_MAX_BYTES, cleanupIntervalMs: 60000}})});
@@ -185,7 +180,7 @@ async function serve(options) {
     const tick = () => {
       if (stopping) return;
       try {
-        upstream = getUpstream();
+        upstream = options.upstream || discoverCcSwitch(options.databasePath);
         if (new URL(upstream).port === String(options.port)) throw new Error('Filter port conflicts with ' + upstreamName + '.');
         router.sync();
         lastError = null;
@@ -215,45 +210,34 @@ async function serve(options) {
   }
 }
 async function status(options) {
-  const policy = resolvePolicy(options);
   const record = jsonFile(files(options).state);
   const running = await health(record);
   if (running) {
     const {instance, ...publicState} = running;
     const upstreamReachable = await reachable(running.upstream);
     return {...publicState, running: true, upstreamReachable,
-      ...((running.gateway || resolvePolicy({mode: running.mode}).gateway) === 'magpie'
-        ? {magpieReachable: upstreamReachable} : {ccSwitchReachable: upstreamReachable})};
+      ...(running.mode?.startsWith('magpie') ? {magpieReachable: upstreamReachable} : {ccSwitchReachable: upstreamReachable})};
   }
-  return {service: serviceForMode(options.mode || policy.gateway), mode: options.mode || policy.gateway, ...policy,
+  return {service: serviceForMode(options.mode), mode: options.mode || 'ccswitch',
     running: false, state: record ? 'stale-state' : 'stopped',
     recoveryBackup: fs.existsSync(files(options).backup), runtime: options.runtime,
     portConflict: await portConflict(options)};
 }
-function assertMatchingOptions(options, running) {
-  const policy = resolvePolicy(options);
-  const runningPolicy = running.gateway && running.cleanup ? resolvePolicy({gateway: running.gateway, cleanup: running.cleanup})
-    : resolvePolicy({mode: running.mode});
-  if (running.filterOrigin !== options.filterOrigin || running.configPath !== options.configPath
-      || policy.gateway !== runningPolicy.gateway || policy.cleanup !== runningPolicy.cleanup
-      || options.mode && (running.mode || 'ccswitch') !== options.mode || options.upstream && options.upstream !== running.upstream) {
-    throw new Error('Running filter has different options. Stop it before changing config/port/mode/gateway/cleanup/upstream.');
-  }
-}
 async function start(options) {
-  const policy = resolvePolicy(options);
   const locations = files(options);
   const running = await health(jsonFile(locations.state));
   if (running) {
-    assertMatchingOptions(options, running);
+    if (running.filterOrigin !== options.filterOrigin || running.configPath !== options.configPath
+        || (running.mode || 'ccswitch') !== options.mode || options.upstream && options.upstream !== running.upstream) {
+      throw new Error('Running filter has different options. Stop it before changing config/port/mode/upstream.');
+    }
     return status(options);
   }
   const conflict = await portConflict(options);
   if (conflict) throw new Error(conflictMessage(conflict));
   fs.mkdirSync(options.runtime, {recursive: true});
   const args = [__filename, 'serve', '--port', String(options.port), '--config', options.configPath, '--runtime', options.runtime];
-  if (options.mode !== undefined) args.push('--mode', options.mode);
-  args.push('--gateway', policy.gateway, '--cleanup', policy.cleanup);
+  args.push('--mode', options.mode || 'ccswitch');
   if (options.upstream) args.push('--upstream', options.upstream);
   if (options.databasePath) args.push('--cc-db', options.databasePath);
   const child = spawn(process.execPath, args, {cwd: __dirname, detached: true, windowsHide: true, stdio: 'ignore'});
@@ -262,15 +246,8 @@ async function start(options) {
   child.unref();
   for (let count = 0; count < 40; count++) {
     if (failure) throw failure;
-    let record;
-    try { record = jsonFile(locations.state); }
-    catch (error) {
-      // A newly spawned writer can expose its exclusive file before finishing JSON.
-      if (!(error instanceof SyntaxError)) throw error;
-    }
-    const result = await health(record);
+    const result = await health(jsonFile(locations.state));
     if (result) {
-      assertMatchingOptions(options, result);
       if (result.state === 'config-error') throw new Error('Filter started but config was not attached: ' + result.lastError + '. Use stop to restore/stop.');
       return status(options);
     }
@@ -279,12 +256,12 @@ async function start(options) {
   }
   throw new Error('Filter did not become ready. See ' + locations.log);
 }
-async function stop(options, idleOnly = false) {
+async function stop(options) {
   const locations = files(options);
   const record = jsonFile(locations.state);
   const running = await health(record);
   if (running) {
-    await request(record.filterOrigin, ADMIN + (idleOnly ? '/idle-stop' : '/stop'), record.token, 'POST');
+    await request(record.filterOrigin, ADMIN + '/stop', record.token, 'POST');
     for (let count = 0; count < 100; count++) {
       if (jsonFile(locations.state)?.instance !== record.instance) return {running: false, state: 'stopped', restored: true};
       await delay(150);
@@ -296,17 +273,15 @@ async function stop(options, idleOnly = false) {
   }
   const backup = jsonFile(locations.backup);
   if (backup) {
-    const mode = backup.mode || 'ccswitch';
-    const restoreOptions = {...options, configPath: backup.configPath, filterOrigin: backup.filterOrigin, mode, ...resolvePolicy({mode})};
+    const restoreOptions = {...options, configPath: backup.configPath, filterOrigin: backup.filterOrigin, mode: backup.mode || 'ccswitch'};
     routerFor(restoreOptions, locations.backup, () => options.upstream || discoverCcSwitch(options.databasePath)).restore();
   }
   if (record) removeOwnState(locations.state, record.instance);
   return {running: false, state: 'stopped', restored: !!backup};
 }
-async function idleStop(options) { return stop(options, true); }
 
 function formatLog(row, mode = row.mode || 'ccswitch') {
-  const upstreamName = (row.gateway || resolvePolicy({mode}).gateway) === 'magpie' ? 'Magpie' : 'CC Switch';
+  const upstreamName = mode.startsWith('magpie') ? 'Magpie' : 'CC Switch';
   const time = row.time ? new Date(row.time).toLocaleTimeString('zh-CN', {hour12: false}) : '--:--:--';
   const id = row.requestId === undefined ? 'service' : '#' + row.requestId;
   const code = row.errorCode || ({resource: 'different_azure', rateLimit: 'rate_limit', transport: 'stream_incomplete',
@@ -436,10 +411,10 @@ async function main(argv = process.argv.slice(2)) {
   if (Number(process.versions.node.split('.')[0]) < 24) throw new Error('Node.js 24 or later is required (built-in SQLite and zstd).');
   const options = parseArgs(argv);
   if (options.command === 'help') {
-    console.log('node filter.cjs start|stop|idle-stop|status|logs|serve [--mode ccswitch|magpie|magpie-ccs|magpie-auto] [--gateway ccswitch|magpie] [--cleanup preserve|conditional|always] [--port 18181] [--upstream http://127.0.0.1:15721] [--config PATH] [--runtime PATH] [--cc-db PATH]');
+    console.log('node filter.cjs start|stop|status|logs|serve [--mode ccswitch|magpie|magpie-ccs|magpie-auto] [--port 18181] [--upstream http://127.0.0.1:15721] [--config PATH] [--runtime PATH] [--cc-db PATH]');
   } else if (options.command === 'serve') await serve(options);
   else if (options.command === 'logs') await logs(options);
-  else console.log(JSON.stringify(await ({start, stop, 'idle-stop': idleStop, status}[options.command])(options), null, 2));
+  else console.log(JSON.stringify(await ({start, stop, status}[options.command])(options), null, 2));
 }
 if (require.main === module) main().catch(error => { console.error('Filter: ' + error.message); process.exitCode = 1; });
-module.exports = {parseArgs, start, stop, idleStop, status, serve, request, formatLog, pruneLog, main};
+module.exports = {parseArgs, start, stop, status, serve, request, formatLog, pruneLog, main};

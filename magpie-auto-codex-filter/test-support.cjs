@@ -1,7 +1,6 @@
 'use strict';
 const fs=require('node:fs');
 const path=require('node:path');
-const os=require('node:os');
 const http=require('node:http');
 const {once}=require('node:events');
 const assert=require('node:assert/strict');
@@ -29,12 +28,13 @@ function call(origin, route, {body, headers = {}, method = 'POST'} = {}) {
   });
 }
 function fixture(t) {
-  const root = fs.realpathSync(os.tmpdir());
-  const directory = fs.mkdtempSync(path.join(root, 'magpie-test-'));
+  const root = path.join(__dirname, '.runtime');
+  fs.mkdirSync(root, {recursive: true});
+  const directory = fs.mkdtempSync(path.join(root, 'test-'));
   t.after(() => {
-    // Never touch the user's live runtime; remove only this test's own temp folder.
+    // Only remove the temporary directory this test created under the workspace.
     assert.equal(path.dirname(fs.realpathSync(directory)), fs.realpathSync(root));
-    assert.match(path.basename(directory), /^magpie-test-/);
+    assert.match(path.basename(directory), /^test-/);
     fs.rmSync(directory, {recursive: true, force: true});
   });
   return directory;

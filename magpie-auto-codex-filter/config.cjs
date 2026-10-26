@@ -1,7 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const {ConfigRouter: BaseRouter, atomicWrite, replaceBase, sameEndpoint,
-  rewriteOrigin, sectionProvider, unquote} = require('./config.cjs');
+  rewriteOrigin, sectionProvider, unquote} = require('./base-config.cjs');
 
 function magpieEntries(text) {
   let provider = null;

@@ -47,7 +47,7 @@ test('conditional entry uses independent 18184 runtime and rejects other modes',
   assert.equal(options.mode, 'magpie-auto');
   assert.equal(options.port, 18184);
   assert.equal(options.upstream, 'http://127.0.0.1:3425');
-  assert.equal(options.runtime, path.join(__dirname, '.runtime'));
+  assert.equal(options.runtime, path.join(__dirname, '..', '.runtime'));
   for (const mode of ['ccswitch', 'magpie', 'magpie-ccs']) assert.throws(() => e.parseArgs(['start', '--mode', mode]));
 });
 
@@ -215,7 +215,7 @@ test('cancellation during cleanup backoff prevents the retry and leaves no activ
   assert.equal((await h.health()).stats.resourceRetries, 0);
 });
 
-test('conditional CMD start/logs/stop use independent runtime and restore exact addresses', {skip: process.platform !== 'win32'}, async t => {
+test('conditional CMD start/logs/stop use independent runtime and restore exact addresses', async t => {
   const e = entry(), directory = fixture(t), configPath = path.join(directory, 'config.toml');
   const upstream = http.createServer((req, res) => { req.resume(); res.end('{}'); });
   const upstreamOrigin = await listen(upstream);
@@ -228,7 +228,7 @@ test('conditional CMD start/logs/stop use independent runtime and restore exact 
   const options = e.parseArgs(['status', '--port', String(port), '--config', configPath, '--runtime', runtime, '--upstream', upstreamOrigin]);
   t.after(async () => { await e.stop(options); await close(upstream); });
   const invoke = (file, viewer = false) => new Promise((resolve, reject) => {
-    const script = path.join(__dirname, file); assert.ok(fs.existsSync(script), 'Conditional CMD is missing');
+    const script = path.join(__dirname, '..', file); assert.ok(fs.existsSync(script), 'Conditional CMD is missing');
     const command = '""' + script + '" --port ' + port + ' --upstream ' + upstreamOrigin
       + ' --config "' + configPath + '" --runtime "' + runtime + '""';
     const child = spawn(process.env.ComSpec, ['/d', '/s', '/c', command], {cwd: directory, windowsHide: true,

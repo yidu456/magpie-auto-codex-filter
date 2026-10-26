@@ -4,9 +4,6 @@ const http = require('node:http');
 const zlib = require('node:zlib');
 const {timingSafeEqual} = require('node:crypto');
 const {StringDecoder} = require('node:string_decoder');
-const {once} = require('node:events');
-const {performance} = require('node:perf_hooks');
-const {resolvePolicy} = require('./policy.cjs');
 const SERVICE = 'ccswitch-codex-reasoning-filter-v1';
 const MAGPIE_SERVICE = 'magpie-codex-filter-v1';
 const MAGPIE_CCS_SERVICE = 'magpie-ccs-codex-filter-v1';
@@ -39,10 +36,6 @@ class FilterError extends Error {
 }
 
 function filterResponsesRequest(body, mode = 'ccswitch') {
-  return prepareResponsesRequest(body, resolvePolicy({mode}).cleanup);
-}
-
-function prepareResponsesRequest(body, cleanup) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     throw new FilterError('invalid_request_json', 'Responses request must be a JSON object.');
   }
@@ -52,7 +45,8 @@ function prepareResponsesRequest(body, cleanup) {
   if (body.input !== undefined && typeof body.input !== 'string' && !Array.isArray(body.input)) {
     throw new FilterError('invalid_input', 'input must be a string or an array.');
   }
-  if (cleanup !== 'always') return {body, removed: 0, removedItemIds: 0};
+  // Magpie owns provider-specific reasoning, tool and compaction conversion.
+  if (mode === 'magpie' || mode === 'magpie-auto') return {body, removed: 0, removedItemIds: 0};
   if (body.previous_response_id || body.conversation) {
     throw new FilterError('response_reference_not_portable',
       'Complete message/tool history is required, not previous_response_id or conversation references. Start a new session with a text summary.');
@@ -139,21 +133,6 @@ function decodeBody(buffer, encoding, limit) {
   }
 }
 
-async function decodeBodyAsync(buffer, encoding, limit, signal) {
-  const name = String(encoding || 'identity').toLowerCase();
-  if (name === 'identity') return buffer;
-  const decode = {__proto__: null, gzip: zlib.gunzip, deflate: zlib.inflate, br: zlib.brotliDecompress, zstd: zlib.zstdDecompress}[name];
-  if (!decode) throw new FilterError('unsupported_content_encoding', 'Unsupported request Content-Encoding.', 415);
-  try {
-    return await new Promise((resolve, reject) => decode(buffer, {maxOutputLength: limit, signal},
-      (error, raw) => error ? reject(error) : resolve(raw)));
-  } catch (error) {
-    if (signal.aborted) throw error;
-    if (error.code === 'ERR_BUFFER_TOO_LARGE') throw new FilterError('request_too_large', 'Decoded request exceeds filter size limit.', 413);
-    throw new FilterError('invalid_compressed_request', 'Cannot decode compressed request.');
-  }
-}
-
 function sendError(res, error) {
   if (res.destroyed) return;
   if (res.headersSent) { res.destroy(); return; }
@@ -229,10 +208,9 @@ function responseDecoder(encoding) {
   }
 }
 
-function makeProxy({getUpstream, token, mode, gateway, cleanup, onStop = () => {}, getState = () => ({}), log = () => {}, limit = LIMIT,
+function makeProxy({getUpstream, token, mode = 'ccswitch', onStop = () => {}, getState = () => ({}), log = () => {}, limit = LIMIT,
     retryDelay = retryDelayMs, heartbeatMs = 15000, idleTimeoutMs = 120000, deadlineMs = 1800000}) {
-  const policy = resolvePolicy({mode, gateway, cleanup});
-  const upstreamName = policy.gateway === 'ccswitch' ? 'CC Switch' : 'Magpie';
+  const upstreamName = mode === 'ccswitch' ? 'CC Switch' : 'Magpie';
   const stats = {requests: 0, filteredRequests: 0, removedReasoningItems: 0, removedItemIds: 0,
     blockedRequests: 0, upstreamErrors: 0, upstreamHttpErrors: 0, lastFilteredAt: null, lastUpstreamStatus: null,
     resourceRetries: 0, resourceRetryAccepted: 0, resourceRetryExhausted: 0,
@@ -240,23 +218,16 @@ function makeProxy({getUpstream, token, mode, gateway, cleanup, onStop = () => {
     transportRetries: 0, transportRetryAccepted: 0, transportRetryExhausted: 0,
     availabilityRetries: 0, availabilityRetryAccepted: 0, availabilityRetryExhausted: 0,
     streamRetryErrors: 0, activeRequests: 0};
-  let nextRequestId = 0, inflightRequests = 0, accepting = true;
+  let nextRequestId = 0;
   const server = http.createServer(async (req, res) => {
-    const requestPolicy = policy;
     let upstreamRequest, upstreamResponse, responseStream, retryTimer, deadlineTimer, heartbeatTimer;
-    let active = false, stopped = false, admitted = false, control = false, requestId, outcome, progressTimer;
+    let active = false, stopped = false, requestId, outcome, progressTimer;
     const startedAt = Date.now();
-    const started = performance.now(), preparation = new AbortController();
-    const timingsMs = {}, bytes = {};
-    let backoffStarted, deliveryStarted, disposeAttempt = () => {};
-    const elapsed = () => performance.now() - started;
     const errorLabel = kind => ({resource: 'different_azure', rateLimit: 'rate_limit', transport: 'stream_incomplete',
       availability: 'no_available_channel'})[kind] || 'other';
     const cancel = () => {
       if (stopped) return;
       stopped = true;
-      preparation.abort();
-      disposeAttempt();
       clearTimeout(retryTimer);
       clearTimeout(deadlineTimer);
       clearInterval(heartbeatTimer);
@@ -266,33 +237,22 @@ function makeProxy({getUpstream, token, mode, gateway, cleanup, onStop = () => {
       responseStream?.destroy();
       if (active) {
         stats.activeRequests--; active = false;
-        if (backoffStarted !== undefined) timingsMs.backoff = (timingsMs.backoff || 0) + performance.now() - backoffStarted;
-        if (deliveryStarted !== undefined) timingsMs.delivery = performance.now() - deliveryStarted;
-        log('request-finished', {requestId, outcome: outcome || 'canceled', durationMs: Date.now() - startedAt, timingsMs, bytes});
+        log('request-finished', {requestId, outcome: outcome || 'canceled', durationMs: Date.now() - startedAt});
       }
     };
     res.once('close', cancel);
     res.once('finish', cancel);
     req.once('aborted', cancel);
-    const releaseAdmission = () => {
-      if (!admitted) return;
-      admitted = false;
-      inflightRequests--;
-    };
-    res.once('close', releaseAdmission);
-    res.once('finish', releaseAdmission);
-    req.once('aborted', releaseAdmission);
     try {
       if (!req.url.startsWith('/') || req.url.startsWith('//') || req.url.includes('\\')) {
         throw new FilterError('invalid_target', 'Only origin-form HTTP requests are accepted.');
       }
       let target = req.url;
-      if (requestPolicy.gateway === 'magpie' && target.startsWith('/magpie/')) target = target.slice('/magpie'.length);
+      if (mode !== 'ccswitch' && target.startsWith('/magpie/')) target = target.slice('/magpie'.length);
       if (target.startsWith('//') || decodeURIComponent(target).includes('\\')) {
         throw new FilterError('invalid_target', 'Only origin-form HTTP requests are accepted.');
       }
       const route = decodeURIComponent(new URL(target, 'http://127.0.0.1').pathname);
-      control = route.startsWith(ADMIN);
       if (target !== req.url && route.startsWith(ADMIN)) {
         throw new FilterError('unknown_control_route', 'Control routes cannot be accessed through the Magpie prefix.', 403);
       }
@@ -301,9 +261,8 @@ function makeProxy({getUpstream, token, mode, gateway, cleanup, onStop = () => {
       }
       if (route === ADMIN + '/health' && req.method === 'GET') {
         res.writeHead(200, {'content-type': 'application/json'});
-        res.end(JSON.stringify({service: serviceForMode(mode || policy.gateway), filterVersion: FILTER_VERSION,
-          mode: mode || policy.gateway, pid: process.pid, stats,
-          retryPolicy: {maxRetries: MAX_RETRIES, limits: RETRY_LIMITS, deadlineMs}, ...getState(), ...policy, inflightRequests}));
+        res.end(JSON.stringify({service: serviceForMode(mode), filterVersion: FILTER_VERSION, mode, pid: process.pid, stats,
+          retryPolicy: {maxRetries: MAX_RETRIES, limits: RETRY_LIMITS, deadlineMs}, ...getState()}));
         return;
       }
       if (route.startsWith(ADMIN)) {
@@ -312,23 +271,13 @@ function makeProxy({getUpstream, token, mode, gateway, cleanup, onStop = () => {
         if (!expected.length || expected.length !== given.length || !timingSafeEqual(given, expected)) {
           throw new FilterError('invalid_control_token', 'Invalid local control token.', 403);
         }
-        if (![ADMIN + '/stop', ADMIN + '/idle-stop'].includes(route) || req.method !== 'POST') throw new FilterError('unknown_control_route', 'Unknown control route.', 404);
-        if (route === ADMIN + '/idle-stop') {
-          if (!accepting) throw new FilterError('filter_stopping', 'The filter is already stopping.', 409);
-          if (inflightRequests) throw new FilterError('filter_busy', 'The filter has admitted requests; retry when idle.', 409);
-          // Close admission in the same turn as the idle check, before restoration can yield.
-          accepting = false;
-          try { await onStop(); }
-          catch (error) { accepting = true; throw error; }
-        } else await onStop();
+        if (route !== ADMIN + '/stop' || req.method !== 'POST') throw new FilterError('unknown_control_route', 'Unknown control route.', 404);
+        await onStop();
         res.writeHead(200, {'content-type': 'application/json'});
         res.end('{"stopping":true}');
         return;
       }
-      if (!accepting) throw new FilterError('filter_stopping', 'The filter is stopping and cannot admit requests.', 503);
-      admitted = true;
-      inflightRequests++;
-      if (requestPolicy.cleanup === 'always' && /\/responses\/compact\/?$/.test(route)) {
+      if (mode !== 'magpie' && mode !== 'magpie-auto' && /\/responses\/compact\/?$/.test(route)) {
         throw new FilterError('encrypted_compaction_disabled',
           'Encrypted Responses compaction is disabled. Use a text summary and start a new session.', 409);
       }
@@ -340,18 +289,12 @@ function makeProxy({getUpstream, token, mode, gateway, cleanup, onStop = () => {
       const isResponses = /\/responses\/?$/.test(route) && req.method === 'POST';
       requestId = ++nextRequestId;
       if (isResponses) {
-        const received = await readBody(req, limit);
-        if (stopped || res.destroyed || req.aborted) return;
-        bytes.received = received.length;
-        const raw = await decodeBodyAsync(received, req.headers['content-encoding'], limit, preparation.signal);
-        if (stopped || res.destroyed || req.aborted) return;
-        bytes.decoded = raw.length;
+        const raw = decodeBody(await readBody(req, limit), req.headers['content-encoding'], limit);
         try { input = JSON.parse(raw.toString('utf8')); }
         catch { throw new FilterError('invalid_request_json', 'Responses request is not valid JSON.'); }
-        const filtered = prepareResponsesRequest(input, requestPolicy.cleanup);
+        const filtered = filterResponsesRequest(input, mode);
         requestedStream = filtered.body.stream === true;
-        body = filtered.body === input ? raw : Buffer.from(JSON.stringify(filtered.body));
-        if (requestPolicy.cleanup !== 'conditional') input = undefined;
+        body = Buffer.from(JSON.stringify(filtered.body));
         delete headers['content-encoding'];
         delete headers.expect;
         headers['content-type'] = 'application/json';
@@ -360,11 +303,10 @@ function makeProxy({getUpstream, token, mode, gateway, cleanup, onStop = () => {
         stats.removedReasoningItems += filtered.removed;
         stats.removedItemIds += filtered.removedItemIds;
         stats.lastFilteredAt = new Date().toISOString();
-        log(requestPolicy.cleanup === 'conditional' ? 'history-preserved' : 'filtered',
+        log(mode === 'magpie-auto' ? 'history-preserved' : 'filtered',
           {requestId, removed: filtered.removed, removedItemIds: filtered.removedItemIds});
       }
       if (res.destroyed || req.aborted) return;
-      timingsMs.preparation = elapsed();
       stats.requests++;
       stats.activeRequests++;
       active = true;
@@ -378,6 +320,7 @@ function makeProxy({getUpstream, token, mode, gateway, cleanup, onStop = () => {
         elapsedMs: Date.now() - startedAt, remainingMs: Math.max(0, deadlineMs - (Date.now() - startedAt))
       }), 15000);
       const deadlineAt = Date.now() + deadlineMs;
+      let disposeAttempt = () => {};
       const startHeartbeat = () => {
         if (!requestedStream || heartbeatTimer) return;
         const beat = () => {
@@ -421,7 +364,7 @@ function makeProxy({getUpstream, token, mode, gateway, cleanup, onStop = () => {
         }
         if (cleanupCode && !historyCleaned) {
           let cleaned;
-          try { cleaned = prepareResponsesRequest(input, 'always'); }
+          try { cleaned = filterResponsesRequest(input, 'ccswitch'); }
           catch (error) {
             stats.blockedRequests++;
             requestLog('cleanup-refused', {code: error.code || 'history_cleanup_failed'});
@@ -441,15 +384,12 @@ function makeProxy({getUpstream, token, mode, gateway, cleanup, onStop = () => {
         retries++;
         retriesByKind[kind]++;
         phase = 'backoff';
-        backoffStarted = performance.now();
         retryKinds.add(kind);
         requestLog('retry-scheduled', {kind, errorCode, retry: retries, maxRetries: MAX_RETRIES,
           kindRetry: retriesByKind[kind], maxKindRetries, delayMs});
         startHeartbeat();
         retryTimer = setTimeout(() => {
           if (stopped || res.destroyed) return;
-          timingsMs.backoff = (timingsMs.backoff || 0) + performance.now() - backoffStarted;
-          backoffStarted = undefined;
           stats[kind + 'Retries']++;
           phase = 'upstream';
           requestLog('retry-dispatched', {kind, errorCode, retry: retries, maxRetries: MAX_RETRIES,
@@ -469,11 +409,11 @@ function makeProxy({getUpstream, token, mode, gateway, cleanup, onStop = () => {
         stats.upstreamErrors++;
         outcome = 'failed';
         requestLog('upstream-error', {code: error.code || error.message || 'timeout'});
-        const code = requestPolicy.gateway === 'ccswitch' ? 'ccswitch_unavailable' : 'magpie_unavailable';
+        const code = mode === 'ccswitch' ? 'ccswitch_unavailable' : 'magpie_unavailable';
         if (heartbeatTimer && res.headersSent) {
           res.end('event: error\ndata: ' + JSON.stringify({type: 'error', code,
             message: 'Cannot reach ' + upstreamName + ' or request deadline expired.'}) + '\n\n');
-        } else sendError(res, new FilterError(code, requestPolicy.gateway === 'magpie'
+        } else sendError(res, new FilterError(code, mode !== 'ccswitch'
           ? 'Cannot reach Magpie or request deadline expired. Check its local gateway, then retry.'
           : 'Cannot reach CC Switch. Enable its local proxy and Codex takeover, then retry.', 502));
         cancel();
@@ -488,11 +428,9 @@ function makeProxy({getUpstream, token, mode, gateway, cleanup, onStop = () => {
       const dispatch = () => {
         if (stopped || res.destroyed) return;
         let discarded = false, settled = false;
-        let releaseBuffered = () => {};
         const discard = () => {
           if (discarded) return;
           discarded = true;
-          releaseBuffered();
           upstreamRequest?.setTimeout(0);
           // Keep the guarded error listeners while destroying sockets: a request
           // without response headers can still emit ECONNRESET after destruction.
@@ -512,9 +450,6 @@ function makeProxy({getUpstream, token, mode, gateway, cleanup, onStop = () => {
         upstreamRequest = http.request({hostname: upstream.hostname.replace(/^\[|\]$/g, ''), port: upstream.port || 80,
           path: target, method: req.method, headers}, response => {
           upstreamResponse = response;
-          timingsMs.headers ??= elapsed();
-          response.on('data', chunk => { bytes.upstream = (bytes.upstream || 0) + chunk.length; });
-          response.once('end', () => { timingsMs.upstreamComplete = elapsed(); });
           if (isResponses) {
             stats.lastUpstreamStatus = response.statusCode;
             if (response.statusCode >= 400) {
@@ -557,50 +492,26 @@ function makeProxy({getUpstream, token, mode, gateway, cleanup, onStop = () => {
               responseStream = stream;
             } catch (error) { attemptFailed(error); return; }
             const decoder = new StringDecoder('utf8');
-            let chunks = [];
+            const chunks = [];
             let size = 0, pending = '';
-            releaseBuffered = () => { chunks.length = 0; pending = ''; };
             const detach = () => {
               stream.removeListener('data', inspect);
               stream.removeListener('end', ended);
             };
-            const finish = async (success = true) => {
+            const finish = (success = true) => {
               settled = true;
               detach();
-              timingsMs.upstreamComplete = elapsed();
               if (success) accepted(response);
               else { outcome = 'failed'; stopHeartbeat(); }
-              const committed = chunks;
-              chunks = [];
-              discard();
-              deliveryStarted = performance.now();
-              bytes.delivered = 0;
-              phase = 'delivery';
-              try {
-                if (!res.headersSent) {
-                  res.writeHead(200, cleanHeaders(response.headers)); res.flushHeaders();
-                }
-                // Only a terminal decision commits these original chunks; never drain a failed attempt.
-                for (let i = 0; i < committed.length; i++) {
-                  if (stopped || res.destroyed) return;
-                  const chunk = committed[i];
-                  committed[i] = null;
-                  const writable = res.write(chunk);
-                  bytes.delivered += chunk.length;
-                  if (!writable) await once(res, 'drain', {signal: preparation.signal});
-                }
-                if (!stopped && !res.destroyed) res.end();
-              } catch (error) {
-                if (!stopped && !res.destroyed) res.destroy(error);
-              } finally {
-                committed.length = 0;
+              if (!res.headersSent) {
+                res.writeHead(200, cleanHeaders(response.headers)); res.flushHeaders();
               }
+              res.end(Buffer.concat(chunks));
+              discard();
             };
             const inspect = chunk => {
               if (discarded || settled || stopped) return;
-              timingsMs.firstResponseData ??= elapsed();
               chunks.push(chunk); size += chunk.length;
-              bytes.bufferedPeak = Math.max(bytes.bufferedPeak || 0, size);
               if (size > limit) {
                 settled = true; detach(); discard();
               requestLog('response-buffer-exceeded', {limit, code: 'response_too_large'});
@@ -621,7 +532,7 @@ function makeProxy({getUpstream, token, mode, gateway, cleanup, onStop = () => {
                 const event = lines.find(line => line.startsWith('event:'))?.slice(6).trim() || value.type;
                 if (event === 'error' || event === 'response.failed') {
                   const parsedError = {...value, type: event};
-                  const cleanupCode = requestPolicy.cleanup === 'conditional' ? historyErrorCode(parsedError) : null;
+                  const cleanupCode = mode === 'magpie-auto' ? historyErrorCode(parsedError) : null;
                   const kind = cleanupCode ? 'resource' : retryErrorClass(parsedError);
                   const detail = value.error || value.response?.error || value;
                   const code = String(detail.code || detail.type || 'other').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80);
@@ -688,7 +599,7 @@ function makeProxy({getUpstream, token, mode, gateway, cleanup, onStop = () => {
             const albBadRequest = response.statusCode === 400 && isAlbBadRequestPage(
               value ? value.error?.code === 'cc_switch_upstream_error' ? value.error.message : '' : decoded);
             const detected = retryErrorClass(value);
-            const cleanupCode = requestPolicy.cleanup === 'conditional' && response.statusCode === 400 ? historyErrorCode(value) : null;
+            const cleanupCode = mode === 'magpie-auto' && response.statusCode === 400 ? historyErrorCode(value) : null;
             const kind = cleanupCode ? 'resource' : albBadRequest ? 'transport' : ((detected === 'resource' && response.statusCode === 400)
               || (detected === 'rateLimit' && [400, 429].includes(response.statusCode))
               || (detected === 'availability' && response.statusCode === 503) ? detected : null);
@@ -710,8 +621,7 @@ function makeProxy({getUpstream, token, mode, gateway, cleanup, onStop = () => {
       startHeartbeat();
       dispatch();
     } catch (error) {
-      if (stopped || res.destroyed || req.aborted) return;
-      if (!control) stats.blockedRequests++;
+      stats.blockedRequests++;
       log('blocked', {code: error.code || 'filter_error'});
       sendError(res, error instanceof FilterError ? error : new FilterError('local_filter_error', 'Local filter failed to handle request.', 500));
     }
