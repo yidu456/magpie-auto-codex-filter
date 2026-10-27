@@ -4,7 +4,7 @@
 Build the approved local console and EXE on dev, with a verified commit per step.
 
 ## Next Step
-Task 6: final verification, documentation and source manifest.
+All implementation steps complete. User acceptance against real client remains.
 
 ## Current Phase
 Phase 7
@@ -31,7 +31,7 @@ Phase 7
 **Status:** complete
 
 ### Phase 7: Validation and handoff
-**Status:** in_progress
+**Status:** complete
 
 ## Decisions
 - Work in supplied checkout on literal dev branch; no extra worktree or push.

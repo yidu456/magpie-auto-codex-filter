@@ -142,8 +142,8 @@ node scripts/smoke-exe.cjs dist/MagpieFilter.exe
 
 **Files:** update README, source integrity manifest, plan/progress; fix any verified defects with regression tests before final commit.
 
-- [ ] Run all node tests; repeat packaged lifecycle and browser round-trip using only fixtures/mock server.
-- [ ] Review full diff for auth leaks, shared-state races, stale backups, unsupported claims and CLI regressions.
-- [ ] Document exact start/stop behavior, checkbox limits, legacy-service conflict, first-client-restart caveat, unsigned EXE and measured artifact size.
-- [ ] Regenerate SHA256SUMS from tracked release source (excluding runtime/artifacts); verify all entries and `git diff --check`.
-- [ ] Commit `docs: verify dev console and document safe usage`; report commits, tests, artifact and remaining real-client verification gap. Leave `dev` unmerged/unpushed.
+- [x] Run all node tests; repeat packaged lifecycle and browser round-trip using only fixtures/mock server.
+- [x] Review full diff for auth leaks, shared-state races, stale backups, unsupported claims and CLI regressions.
+- [x] Document exact start/stop behavior, checkbox limits, legacy-service conflict, first-client-restart caveat, unsigned EXE and measured artifact size.
+- [x] Regenerate SHA256SUMS from tracked release source (excluding runtime/artifacts); verify all entries and `git diff --check`.
+- [x] Commit `docs: verify dev console and document safe usage`; report commits, tests, artifact and remaining real-client verification gap. Leave `dev` unmerged/unpushed.

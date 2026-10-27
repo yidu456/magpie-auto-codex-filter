@@ -2,8 +2,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const http = require('node:http');
 const {spawn} = require('node:child_process');
-const {call} = require('../magpie-auto-codex-filter/test-support.cjs');
+const {call, listen, close} = require('../magpie-auto-codex-filter/test-support.cjs');
 
 async function main() {
   const exe = path.resolve(process.argv[2] || 'dist/MagpieFilter.exe');
@@ -20,7 +21,7 @@ async function main() {
     while (Date.now() < deadline) { const result = await fn(); if (result) return result; await new Promise(r => setTimeout(r, 60)); }
     throw new Error('Packaged lifecycle timed out. ' + children.map(c => c.output).join('\n'));
   };
-  let record;
+  let record, upstreamServer;
   const stop = async () => {
     if (!record) return;
     const headers = {'x-console-token': record.token, 'content-type': 'application/json'};
@@ -36,14 +37,42 @@ async function main() {
     assert.equal((await call(record.origin, '/', {method: 'GET'})).status, 200);
     const second = launch(); await wait(() => second.exitCode !== null); assert.equal(second.exitCode, 0, second.output);
     assert.equal(JSON.parse(fs.readFileSync(path.join(runtime, 'service.json'), 'utf8')).pid, first.pid);
+    const received = [];
+    upstreamServer = http.createServer((req, res) => {
+      let text = ''; req.on('data', chunk => { text += chunk; });
+      req.on('end', () => { received.push(text); res.end('{}'); });
+    });
+    const upstream = await listen(upstreamServer), reservation = http.createServer();
+    const port = Number(new URL(await listen(reservation)).port); await close(reservation);
+    const configPath = path.join(runtime, 'mock-codex.toml');
+    const original = 'model_provider="mock"\n[model_providers.mock]\nbase_url="' + upstream + '/v1"\n';
+    fs.writeFileSync(configPath, original);
+    const controlHeaders = {...headers, 'content-type': 'application/json'};
+    let applied = await call(record.origin, '/api/settings', {headers: controlHeaders, body: JSON.stringify({revision: state.revision,
+      settings: {...state.settings, upstream, port, configPath, policy: {...state.settings.policy, enabled: true, cleanup: 'always'}}})});
+    assert.equal(applied.status, 200, applied.body);
+    let current = JSON.parse(applied.body);
+    assert.equal(current.attached, true);
+    const proxyOrigin = 'http://127.0.0.1:' + port;
+    assert.equal((await call(proxyOrigin, '/magpie/v1/responses', {body: '{"input":[{"type":"reasoning","encrypted_content":"mock"},{"role":"user","content":"hi"}]}'})).status, 200);
+    assert.equal(JSON.parse(received[0]).input.length, 1);
+    applied = await call(record.origin, '/api/settings', {headers: controlHeaders, body: JSON.stringify({revision: current.revision,
+      settings: {...current.settings, policy: {...current.settings.policy, enabled: false}}})});
+    assert.equal(applied.status, 200); current = JSON.parse(applied.body);
+    assert.equal((await call(proxyOrigin, '/magpie/v1/responses', {body: 'raw bypass'})).status, 200);
+    assert.equal(received[1], 'raw bypass');
+    assert.equal((await call(record.origin, '/api/disconnect', {headers: controlHeaders, body: JSON.stringify({revision: current.revision})})).status, 200);
+    assert.equal(fs.readFileSync(configPath, 'utf8'), original);
     assert.equal((await stop()).status, 200); await wait(() => first.exitCode !== null); assert.equal(first.exitCode, 0, first.output);
     assert.equal(fs.existsSync(path.join(runtime, 'service.json')), false);
     assert.equal(fs.existsSync(path.join(runtime, 'instance.lock')), false);
     record = null;
-    console.log(JSON.stringify({exe, runtime, standaloneStartup: true, embeddedAssets: true, singleInstance: true, cleanExit: true}));
+    console.log(JSON.stringify({exe, runtime, standaloneStartup: true, embeddedAssets: true, singleInstance: true,
+      fixtureFilterAndBypass: true, exactRestore: true, cleanExit: true}));
   } finally {
     await stop().catch(() => {});
     for (const child of children) if (child.exitCode === null) await wait(() => child.exitCode !== null).catch(() => child.kill());
+    if (upstreamServer) await close(upstreamServer);
   }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
