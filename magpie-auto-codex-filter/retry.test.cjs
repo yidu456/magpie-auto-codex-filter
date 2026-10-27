@@ -563,19 +563,25 @@ test('HTTP 503 no available channel and SSE failure retry invisibly with a share
   assert.equal(retryDelayMs('availability', 0, {'retry-after': '80'}, 0, () => 0), 80000);
 });
 
-test('persistent unavailable channel exhausts ten retries; quota, auth, and unrelated 503 do not retry', async t => {
+test('persistent availability and server errors exhaust separate budgets; business errors do not retry', async t => {
   const counts = new Map();
   const {origin, health} = await fixture(t, (req, res) => {
     req.resume(); counts.set(req.url, (counts.get(req.url) || 0) + 1);
-    const quota = req.url.includes('quota'), auth = req.url.includes('auth'), unrelated = req.url.includes('other');
+    const quota = req.url.includes('quota'), auth = req.url.includes('auth'), unrelated = req.url.includes('other'), invalid = req.url.includes('invalid');
     res.writeHead(auth ? 401 : 503, {'content-type': 'application/json'});
-    res.end(JSON.stringify({error: {code: quota ? 'insufficient_quota' : auth ? 'invalid_api_key' : 'server_error',
-      message: quota ? 'No available channels: quota exhausted' : unrelated ? 'Internal server error' : 'No available channels'}}));
+    res.end(JSON.stringify({error: {code: quota ? 'insufficient_quota' : auth ? 'invalid_api_key'
+      : invalid ? 'invalid_parameter' : unrelated ? 'server_error' : 'no_available_channel',
+      message: quota ? 'No available channels: quota exhausted' : unrelated ? 'Internal server error'
+        : invalid ? 'Invalid model' : 'No available channels'}}));
   });
-  for (const route of ['/responses?quota', '/responses?auth', '/responses?other']) {
+  for (const route of ['/responses?quota', '/responses?auth', '/responses?invalid']) {
     await (await fetch(origin + route, {method: 'POST', body: '{}'})).text();
     assert.equal(counts.get(route), 1);
   }
+  const serverError = await fetch(origin + '/responses?other', {method: 'POST', body: '{}'});
+  await serverError.text();
+  assert.equal(serverError.status, 503);
+  assert.equal(counts.get('/responses?other'), 11);
   const response = await fetch(origin + '/responses', {method: 'POST', body: '{"stream":true}'});
   const text = await response.text();
   assert.equal((text.match(/event: error/g) || []).length, 1);
@@ -583,6 +589,8 @@ test('persistent unavailable channel exhausts ten retries; quota, auth, and unre
   const stats = (await health()).stats;
   assert.equal(stats.availabilityRetries, 10);
   assert.equal(stats.availabilityRetryExhausted, 1);
+  assert.equal(stats.transportRetries, 10);
+  assert.equal(stats.transportRetryExhausted, 1);
   assert.equal(stats.activeRequests, 0);
 });
 

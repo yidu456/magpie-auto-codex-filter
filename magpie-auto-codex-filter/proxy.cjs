@@ -23,6 +23,7 @@ const TRANSPORT_RETRY_DELAYS = [1000, 2000, 4000, 8000, 15000];
 const AVAILABILITY_RETRY_DELAYS = [5000, 10000, 20000, 30000, 60000];
 const MAX_RETRIES = 20;
 const RETRY_LIMITS = Object.freeze({resource: 5, rateLimit: 20, transport: 10, availability: 10});
+const RELAY_ERROR_CODES = /^(cc_switch_forward_failed|bad_response|server_error)$/;
 // These input forms carry their own contents; the server-issued item id is optional.
 // Other tool/resource types may require their IDs, so don't recursively strip IDs.
 const PORTABLE_ITEMS = new Set(['message', 'function_call', 'function_call_output',
@@ -148,25 +149,42 @@ function isAlbBadRequestPage(text) {
     && /<center>\s*alb\s*<\/center>/i.test(text);
 }
 
+function isAzureResourceError(error) {
+  return typeof error?.message === 'string'
+    && error.message.includes('The requested item was created under a different Azure OpenAI resource.')
+    && error.message.includes('Use the same resource that created the item to access it.');
+}
+
+function isBusinessError(value) {
+  const error = value?.error || value?.response?.error || value;
+  if (!error || typeof error !== 'object') return false;
+  const text = [error.code, error.type, typeof error.message === 'string' ? error.message : ''].join(' ');
+  if (/quota|budget|billing|balance|credit|spend.limit|authentication|authorization|permission|unauthorized|forbidden|invalid[_ -]api[_ -]key/i.test(text)) return true;
+  if ([error.code, error.type].some(code => /^(invalid_parameters?|invalid_params|invalid_argument|unsupported_parameter|model_not_found|context_length_exceeded)$/i.test(code))
+      || /invalid (?:parameters?|argument|model)|unsupported parameter/i.test(text)) return true;
+  // Gateways use invalid_request_error even for the supported cleanup/relay paths.
+  return [error.code, error.type].includes('invalid_request_error') && !isAzureResourceError(error)
+    && !['cc_switch_upstream_error', 'invalid_encrypted_content'].includes(error.code)
+    && !RELAY_ERROR_CODES.test(String(error.code || ''));
+}
+
 function retryErrorClass(value) {
   const reported = value?.error || value?.response?.error;
+  const error = reported || value;
+  if (isBusinessError(value) || [error?.code, error?.type].includes('invalid_encrypted_content')) return null;
   if (value?.type === 'response.failed' && (!reported || (typeof reported === 'object'
       && !reported.code && !reported.type && !reported.message))) return 'transport';
-  const error = value?.error || value?.response?.error || value;
   if (!error || typeof error !== 'object') return null;
   const message = typeof error.message === 'string' ? error.message : '';
   const code = String(error.code || error.type || '');
-  // Quota/billing errors can share HTTP 429 with temporary token throttling.
-  if (/quota|budget|billing|balance|credit|spend.limit/i.test(code + ' ' + error.type + ' ' + message)) return null;
-  if ([error.code, error.type].some(value => /^(invalid_api_key|authentication_error|permission_denied|unauthorized|forbidden)$/.test(value))) return null;
   if ((error.type === 'invalid_request_error' || value?.type === 'error' || value?.type === 'response.failed')
-      && message.includes('The requested item was created under a different Azure OpenAI resource.')
-      && message.includes('Use the same resource that created the item to access it.')) return 'resource';
+      && isAzureResourceError(error)) return 'resource';
   if (/^(rate_limit_exceeded|rate_limit_error|too_many_requests)$/.test(code)
       || /exceeded token rate limit/i.test(message)
       || (/rate limit exceeded/i.test(message) && /your requests|token|requests per minute/i.test(message))) return 'rateLimit';
   if (/^(stream_incomplete|stream_disconnected|upstream_idle_timeout|upstream_aborted)$/.test(code)
       || /stream closed before response\.completed|idle timeout waiting for SSE|stream disconnected before completion/i.test(message)) return 'transport';
+  if (RELAY_ERROR_CODES.test(code)) return 'transport';
   if (code === 'no_available_channel' || /无可用渠道|没有可用渠道|no available channels?/i.test(message)) return 'availability';
   return null;
 }
@@ -192,8 +210,7 @@ function retryDelayMs(kind, index, headers, now = Date.now(), random = Math.rand
 function historyErrorCode(value) {
   const error = value?.error || value?.response?.error || value;
   if (!error || typeof error !== 'object') return null;
-  if (/quota|budget|billing|balance|credit|spend.limit/i.test([error.code, error.type, error.message].join(' '))) return null;
-  if ([error.code, error.type].some(code => /^(invalid_api_key|authentication_error|permission_denied|unauthorized|forbidden)$/.test(code))) return null;
+  if (isBusinessError(value)) return null;
   if (retryErrorClass(value) === 'resource') return 'different_azure';
   return error?.code === 'invalid_encrypted_content' ? 'invalid_encrypted_content' : null;
 }
@@ -300,7 +317,7 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
         catch { throw new FilterError('invalid_request_json', 'Responses request is not valid JSON.'); }
         const filtered = filterResponsesRequest(input, policy.cleanup === 'always' ? 'ccswitch' : 'magpie');
         requestedStream = filtered.body.stream === true;
-        body = Buffer.from(JSON.stringify(filtered.body));
+        body = policy.cleanup === 'always' ? Buffer.from(JSON.stringify(filtered.body)) : raw;
         delete headers['content-encoding'];
         delete headers.expect;
         headers['content-type'] = 'application/json';
@@ -560,7 +577,9 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
                     errorDetailsPresent: !!(value.error || value.response?.error), bufferedBytes: size});
                   // No model/tool output has been delivered to the client. Discard
                   // the whole rejected response instead of repeating client tools.
-                  const scheduled = kind && schedule(kind, response, cleanupCode || errorLabel(kind), cleanupCode);
+                  const relay = kind === 'transport' && RELAY_ERROR_CODES.test(String(detail.code || detail.type || ''));
+                  const scheduled = kind && schedule(kind, response, cleanupCode || (relay ? code : errorLabel(kind)), cleanupCode,
+                    relay ? 'transport' : undefined);
                   if (scheduled) {
                     settled = true; detach();
                     if (scheduled === true) stats.streamRetryErrors++;
@@ -617,13 +636,21 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
               value ? value.error?.code === 'cc_switch_upstream_error' ? value.error.message : '' : decoded);
             const detected = retryErrorClass(value);
             const cleanupCode = policy.cleanup === 'conditional' && response.statusCode === 400 ? historyErrorCode(value) : null;
-            const kind = cleanupCode ? 'resource' : albBadRequest ? 'transport' : ((detected === 'resource' && response.statusCode === 400)
+            const detail = value?.error || value?.response?.error || value;
+            const excluded = [401, 403].includes(response.statusCode) || isBusinessError(value)
+              || !cleanupCode && [detail?.code, detail?.type].includes('invalid_encrypted_content');
+            const kind = excluded ? null : cleanupCode ? 'resource' : albBadRequest ? 'transport' : ((detected === 'resource' && response.statusCode === 400)
               || (detected === 'rateLimit' && [400, 429].includes(response.statusCode))
-              || (detected === 'availability' && response.statusCode === 503) ? detected : null);
+              || (detected === 'availability' && response.statusCode === 503)
+              || detected === 'transport' ? detected
+              : !detected && response.statusCode >= 500 && response.statusCode < 600
+                && value && typeof value === 'object' && !Array.isArray(value) ? 'transport' : null);
             const code = String(value?.error?.code || value?.error?.type || 'other').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80);
             const errorCode = cleanupCode || (albBadRequest ? 'alb_bad_request' : kind ? errorLabel(kind) : code);
             requestLog('http-error', {status: response.statusCode, kind: kind || 'other', errorCode});
-            if (schedule(kind, response, errorCode, cleanupCode)) { settled = true; discard(); return; }
+            if (schedule(kind, response, errorCode, cleanupCode, kind === 'transport' && !albBadRequest ? 'transport' : undefined)) {
+              settled = true; discard(); return;
+            }
             settled = true;
             finishError(response, errorBody);
           };
