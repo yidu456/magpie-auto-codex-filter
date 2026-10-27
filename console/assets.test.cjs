@@ -17,3 +17,12 @@ test('the actual browser assets are served with safe types and no filesystem fal
   }
   assert.equal((await call(origin, '/ui/../controller.cjs', {method: 'GET', headers: {'x-console-token': 'test'}})).status, 404);
 });
+
+test('manual login and pending web settings are available without exposing a token', () => {
+  const html = require('./assets.cjs').loadAssets()['/'].body.toString();
+  for (const id of ['login-form', 'login-token', 'controls', 'web-form', 'web-port', 'web-token', 'web-hint', 'config-file']) {
+    assert.match(html, new RegExp('id="' + id + '"'));
+  }
+  assert.match(html, /id="controls" hidden/);
+  assert.match(html, /重启 Codex/);
+});

@@ -5,11 +5,17 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const {spawn} = require('node:child_process');
 const {call, listen, close} = require('../magpie-auto-codex-filter/test-support.cjs');
+const {createConfigStore} = require('../console/configuration.cjs');
 
 async function main() {
   const exe = path.resolve(process.argv[2] || 'dist/MagpieFilter.exe');
   const root = path.resolve('.verification'); fs.mkdirSync(root, {recursive: true});
   const runtime = fs.mkdtempSync(path.join(root, 'exe-'));
+  const configFile = path.join(runtime, 'MagpieFilter.config.json');
+  const reserved = http.createServer();
+  const webPort = Number(new URL(await listen(reserved)).port); await close(reserved);
+  const store = createConfigStore(configFile);
+  store.save({web: {...store.current.web, port: webPort}}, 0);
   const children = [], env = {...process.env, PATH: process.env.WINDIR + '\\System32', NODE_OPTIONS: ''};
   const launch = () => {
     const child = spawn(exe, ['--runtime', runtime, '--no-open'], {env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']});
@@ -34,6 +40,8 @@ async function main() {
     const headers = {'x-console-token': record.token};
     const state = JSON.parse((await call(record.origin, '/api/state', {method: 'GET', headers})).body);
     assert.equal(state.settings.policy.enabled, false); assert.equal(state.application.pid, first.pid);
+    assert.equal(record.origin, 'http://127.0.0.1:' + webPort);
+    assert.equal(record.token, store.current.web.token);
     assert.equal((await call(record.origin, '/', {method: 'GET'})).status, 200);
     const second = launch(); await wait(() => second.exitCode !== null); assert.equal(second.exitCode, 0, second.output);
     assert.equal(JSON.parse(fs.readFileSync(path.join(runtime, 'service.json'), 'utf8')).pid, first.pid);
@@ -63,12 +71,34 @@ async function main() {
     assert.equal(received[1], 'raw bypass');
     assert.equal((await call(record.origin, '/api/disconnect', {headers: controlHeaders, body: JSON.stringify({revision: current.revision})})).status, 200);
     assert.equal(fs.readFileSync(configPath, 'utf8'), original);
+    // Saved web changes must not prevent re-opening the still-running, old-token instance.
+    current = JSON.parse((await call(record.origin, '/api/state', {method: 'GET', headers})).body);
+    const nextReservation = http.createServer();
+    const nextWebPort = Number(new URL(await listen(nextReservation)).port); await close(nextReservation);
+    const nextToken = 'cd'.repeat(32);
+    assert.equal((await call(record.origin, '/api/web', {headers: controlHeaders,
+      body: JSON.stringify({revision: current.revision, web: {port: nextWebPort, token: nextToken}})})).status, 200);
+    const reopened = launch(); await wait(() => reopened.exitCode !== null); assert.equal(reopened.exitCode, 0, reopened.output);
     assert.equal((await stop()).status, 200); await wait(() => first.exitCode !== null); assert.equal(first.exitCode, 0, first.output);
     assert.equal(fs.existsSync(path.join(runtime, 'service.json')), false);
     assert.equal(fs.existsSync(path.join(runtime, 'instance.lock')), false);
     record = null;
+    const config = JSON.parse(fs.readFileSync(configFile));
+    config.settings.policy.enabled = true; config.settings.policy.cleanup = 'never';
+    const edited = JSON.stringify(config, null, 2); fs.writeFileSync(configFile, edited);
+    const restarted = launch();
+    record = await wait(() => { try { return JSON.parse(fs.readFileSync(path.join(runtime, 'service.json'))); } catch { return null; } });
+    assert.equal(record.origin, 'http://127.0.0.1:' + nextWebPort);
+    assert.equal(record.token, nextToken);
+    current = JSON.parse((await call(record.origin, '/api/state', {method: 'GET', headers: {'x-console-token': nextToken}})).body);
+    assert.equal(current.attached, true); assert.equal(current.settings.policy.cleanup, 'never');
+    assert.equal((await stop()).status, 200); await wait(() => restarted.exitCode !== null);
+    assert.equal(restarted.exitCode, 0, restarted.output);
+    assert.equal(fs.readFileSync(configFile, 'utf8'), edited);
+    assert.equal(fs.readFileSync(configPath, 'utf8'), original); record = null;
     console.log(JSON.stringify({exe, runtime, standaloneStartup: true, embeddedAssets: true, singleInstance: true,
-      fixtureFilterAndBypass: true, exactRestore: true, cleanExit: true}));
+      fixtureFilterAndBypass: true, portableSettings: true, pendingWebRotation: true,
+      editedStartupEnabled: true, exactRestore: true, cleanExit: true}));
   } finally {
     await stop().catch(() => {});
     for (const child of children) if (child.exitCode === null) await wait(() => child.exitCode !== null).catch(() => child.kill());

@@ -15,7 +15,7 @@ leave `main` and the existing running service alone.
 - Codex + Magpie only. Config path, loopback upstream and filter port are editable.
 - Open the console on double-click. Repeated launches reopen the existing instance.
 - Use a separate console runtime, never the legacy `.runtime` directory.
-- Default core OFF on every process launch. Remember preferences, not activation.
+- First generated configuration defaults core OFF; later launches honor the saved enabled preference (approved portable-config amendment).
 - First enable attaches matching Codex endpoints after the proxy is listening.
 - Disable means byte-preserving HTTP/SSE passthrough, not shutdown or config restore.
 - Closing the browser leaves the service running. Explicit disconnect/exit restores
@@ -64,7 +64,7 @@ ownership, cancellation and tool-pair integrity are mandatory, not checkboxes.
 Reuse `makeProxy` and Magpie `ConfigRouter`. Add a small controller, a separate
 loopback HTTP management server, static UI and a launcher. The model proxy keeps
 its existing browser rejection. Management enforces exact Host/Origin, rejects
-cross-site fetches, authenticates all APIs with a per-launch random token, limits
+cross-site fetches, authenticates all APIs with a persistent configuration token, limits
 JSON bodies, whitelists settings and serializes mutations. The token is passed in
 the initial URL fragment and moved to sessionStorage, never returned in status or
 logs. No permissive CORS, remote scripts, remote fonts, model keys or request bodies.

@@ -4,7 +4,7 @@
 Build the approved local console and EXE on dev, with a verified commit per step.
 
 ## Next Step
-Phase 9: finish manual authentication, web settings, packaged/browser acceptance.
+Development and isolated acceptance complete. Preserve dev and the user-started portable instance; real-client acceptance remains user-controlled.
 
 ## Current Phase
 Phase 9
@@ -44,7 +44,7 @@ Phase 9
 - First launch OFF; subsequent startup respects saved enabled state. Exit restores endpoints without changing startup preference.
 
 ### Phase 9: Manual authentication and packaged acceptance
-**Status:** in_progress
+**Status:** complete
 - Token login at fixed URL, editable web settings, packaged tests and documentation.
 - Preserve active-token relaunch during pending rotation; surface recovery failures in the console.
 - Verify ShellExecute browser dispatch, fixed-port startup and non-default filter port using isolated fixtures.

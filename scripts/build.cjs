@@ -15,9 +15,9 @@ function setGuiSubsystem(file) {
   bytes.writeUInt16LE(2, optional + 68);
   fs.writeFileSync(file, bytes);
 }
-async function build() {
+async function build({outputDirectory} = {}) {
   if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Build on Windows x64 with Node 24.12+.');
-  const root = path.resolve(__dirname, '..'), buildDir = path.join(root, '.build'), dist = path.join(root, 'dist');
+  const root = path.resolve(__dirname, '..'), buildDir = path.join(root, '.build'), dist = path.resolve(outputDirectory || path.join(root, 'dist'));
   fs.mkdirSync(buildDir, {recursive: true}); fs.mkdirSync(dist, {recursive: true});
   const entry = path.join(buildDir, 'bundle.cjs'), blob = path.join(buildDir, 'sea.blob'), output = path.join(dist, 'MagpieFilter.exe');
   await require('esbuild').build({entryPoints: [path.join(root, 'console/main.cjs')], bundle: true, platform: 'node',

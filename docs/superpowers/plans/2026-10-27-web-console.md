@@ -16,7 +16,7 @@
 - Windows, Node.js 24.12 or newer; no production npm dependencies.
 - Codex + Magpie only; do not touch real client configuration or running services during development.
 - Keep legacy CLI entry points and default behavior; no broad cleanup/error matching.
-- Default core OFF on every process launch. Remember preferences, not activation.
+- First generated configuration defaults core OFF; later launches honor the saved enabled preference (approved portable-config amendment).
 - Exact recovery before disconnect/exit; never kill unknown processes.
 - No paid model requests; mock upstreams and temporary fixtures only.
 - Checkboxes do not disable trust-boundary validation, budgets, cancellation or tool-pair integrity.
@@ -147,3 +147,15 @@ node scripts/smoke-exe.cjs dist/MagpieFilter.exe
 - [x] Document exact start/stop behavior, checkbox limits, legacy-service conflict, first-client-restart caveat, unsigned EXE and measured artifact size.
 - [x] Regenerate SHA256SUMS from tracked release source (excluding runtime/artifacts); verify all entries and `git diff --check`.
 - [x] Commit `docs: verify dev console and document safe usage`; report commits, tests, artifact and remaining real-client verification gap. Leave `dev` unmerged/unpushed.
+
+## Approved portable-config amendment (2026-10-27)
+
+Supersedes Task 5's AppData/per-launch defaults. Keep the existing live EXE and legacy runtime untouched.
+
+- [x] EXE-adjacent `MagpieFilter.config.json`; `.magpie-filter` logs/recovery; no AppData fallback.
+- [x] Fixed web port 18185 and persisted 64-hex token; default filter port 18184 remains editable.
+- [x] Startup follows saved policy.enabled. Exit restores addresses without changing the saved preference.
+- [x] Atomic shared config saves with external-edit conflict rejection; web port/token apply after restart.
+- [x] Manual login, pending-restart hints and Codex restart instructions for filter-port changes.
+- [x] Windows ShellExecute launch with visible failure guidance; BOM/active-token relaunch and recovery-error regressions.
+- [x] Isolated packaged/browser acceptance and source integrity verification; separate portable artifact to preserve the running original.

@@ -7,7 +7,7 @@ from `cd68b07`. Tests use temporary Codex TOML files, isolated runtimes and loca
 mock HTTP/SSE upstreams. No paid models, real client takeover, legacy service stop,
 remote push, merge or GitHub Actions execution.
 
-## Results
+## Initial Results (Before Portable Configuration)
 
 - Baseline: 58 existing tests passed.
 - Final `npm test`: 107 passed, 0 failed, 0 skipped.
@@ -34,13 +34,43 @@ remote push, merge or GitHub Actions execution.
 - Authenticode: NotSigned. Included Node license matches the build runtime.
 - Dependency install audit reported 0 vulnerabilities; no production npm dependencies.
 
+## Portable Configuration Acceptance
+
+- Final `npm test`: 123 passed, 0 failed, 0 skipped.
+- Fixed regressions for BOM config relaunch, pending token rotation and unpublished
+  recovery errors. Occupied-port automatic activation stays diagnosable and allows
+  correction without abandoning the management console.
+- Config tests cover saved enabled startup, atomic persistence, external-edit
+  rejection, web/filter/upstream port conflicts and restart-pending web settings.
+- Independent review fixes were rechecked: policy saves no longer disable manual
+  re-login after 403; browser-failure fallback points to the active credential cache
+  rather than a pending inactive token. Credentials are not printed in that message.
+- Isolated packaged Chromium smoke covers wrong/correct manual tokens, persistence
+  after reload, invalid port, fixture attach/mode/bypass/restore, pending rotation,
+  policy-save -> 403 -> manual re-login without reload, and authenticated exit.
+  Desktop 1280px and mobile 390px screenshots checked; no page errors or overflow.
+- `node scripts/smoke-exe.cjs dist/portable/MagpieFilter.exe` passes with PATH
+  excluding Node. Covers fixed configured port, embedded assets, singleton,
+  non-default filter port, exact mock restore, pending web port/token rotation,
+  manually edited enabled startup and unchanged saved preference on exit.
+- Separate copied-EXE check without `--runtime` confirms config and runtime resolve
+  beside the EXE, not the current working directory. Uses a temporary workspace
+  directory and a generated OFF configuration with an available web port.
+- Windows ShellExecute dispatch accepted; standalone probe received browser HTTP
+  requests. Packaged fixture also dispatched the default browser. This does not
+  certify every Windows HTTP association or a clean second machine.
+- Current EXE: `dist/portable/MagpieFilter.exe`, 90,185,216 bytes (86.01 MiB).
+- SHA256: `06b5151c3239746748c7b70d2538cbe37e6c0418bba3ade2c11729b3d511da5d`.
+- Authenticode: NotSigned. Built separately to preserve the running original EXE.
+- User confirmed launching the portable build during handoff; its generated config
+  and runtime are user-owned and were not modified or stopped by verification.
+
 ## Limitations
 
 - Not verified on a clean second computer, against real Magpie/model accounts, or
   through the user's active Codex configuration. Performance/RSS was not benchmarked.
-- Browser startup is implemented through the Windows shell; automated packaged
-  smoke uses `--no-open` and opens the returned management origin in a controlled
-  browser. A real Explorer double-click/default-browser acceptance check remains.
+- Browser association dispatch and isolated packaged behavior are verified locally;
+  actual user-session routing and browser behavior on other machines remain unverified.
 - Full-buffer mode retains first-text latency in exchange for late-error recovery.
   Unbuffered/bypass modes intentionally do not provide the same replay protections.
 - No WebSocket, Claude Code, auto-start, tray icon, auto-update or code signing.

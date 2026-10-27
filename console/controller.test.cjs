@@ -156,6 +156,18 @@ test('manual enabled config starts correctly and close restores without erasing 
   assert.equal(fs.readFileSync(h.configPath, 'utf8'), h.original);
 });
 
+test('web port-only save retains pending token rotation without returning credentials', async t => {
+  const h = await setup(t), c = h.controller;
+  const pending = 'cd'.repeat(32);
+  await c.updateWeb({revision: 0, web: {port: 19185, token: pending}});
+  await c.updateWeb({revision: c.status().revision, web: {port: 19186}});
+  const config = JSON.parse(fs.readFileSync(path.join(h.runtime, 'MagpieFilter.config.json')));
+  assert.equal(config.web.token, pending);
+  assert.equal(c.status().web.port, 19186);
+  assert.equal(c.status().web.restartRequired, true);
+  assert.equal(JSON.stringify(c.status()).includes(pending), false);
+});
+
 test('failed automatic activation stays diagnosable and allows retry with an available port', async t => {
   const h = await setup(t), file = path.join(h.runtime, 'MagpieFilter.config.json');
   await h.controller.close();

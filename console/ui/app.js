@@ -2,8 +2,8 @@
 const $ = id => document.getElementById(id);
 const tokenFromUrl = new URLSearchParams(location.hash.slice(1)).get('token');
 if (tokenFromUrl) { sessionStorage.setItem('console-token', tokenFromUrl); history.replaceState(null, '', location.pathname); }
-const token = sessionStorage.getItem('console-token');
-let state, busy = false, dirty = false, exited = false, poll;
+let token = sessionStorage.getItem('console-token');
+let state, busy = false, dirty = false, webDirty = false, exited = false, poll;
 const policyInputs = [...document.querySelectorAll('[name=cleanup], [data-handler]'), $('enabled'), $('buffer-response'), $('heartbeat')];
 const names = {'config-state': '接入状态', 'settings-applied': '设置已应用', 'request-started': '请求开始',
   'request-finished': '请求结束', 'history-preserved': '保留历史', filtered: '请求处理', 'history-cleanup': '清理历史',
@@ -19,7 +19,14 @@ async function api(route, body) {
   const response = await fetch(route, {method: body === undefined ? 'GET' : 'POST', cache: 'no-store',
     headers: {'x-console-token': token || '', 'content-type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)});
   const result = await response.json();
-  if (!response.ok) throw new Error(result.error || '本地服务返回错误');
+  if (!response.ok) {
+    if (response.status === 403) {
+      token = null; sessionStorage.removeItem('console-token'); state = null;
+      $('login').hidden = false; $('controls').hidden = true;
+      $('connection-state').textContent = '需要登录';
+    }
+    throw new Error(response.status === 403 ? '令牌无效或已过期，请输入当前生效的管理令牌。' : result.error || '本地服务返回错误');
+  }
   return result;
 }
 function readConnection() {
@@ -28,12 +35,14 @@ function readConnection() {
 }
 function render() {
   if (!state) return;
+  $('login').hidden = true; $('controls').hidden = false;
   const settings = state.settings, policy = settings.policy, stats = state.stats;
   $('connection-state').textContent = states[state.state] || state.state;
   $('connection-state').classList.toggle('on', state.attached);
-  $('core-state').textContent = policy.enabled ? '已开启' : '已关闭';
-  $('core-lamp').classList.toggle('on', policy.enabled);
-  $('core-description').textContent = policy.enabled ? '勾选的保护已启用。设置即时作用于新请求，进行中的请求保持原策略。'
+  $('core-state').textContent = policy.enabled ? state.connected ? '已开启' : '待接入' : '已关闭';
+  $('core-lamp').classList.toggle('on', policy.enabled && state.connected);
+  $('core-description').textContent = policy.enabled && !state.connected ? '已保存启用偏好，但当前未接入。请先处理错误或修改接入设置。'
+    : policy.enabled ? '勾选的保护已启用。设置即时作用于新请求，进行中的请求保持原策略。'
     : state.connected ? '当前已接入，但绕过过滤核心：请求直通 Magpie，不清理、不重试、不暂存。' : '尚未接入客户端。先确认接入设置，再开启核心过滤。';
   if (!dirty) {
     $('client').value = settings.client; $('config-path').value = settings.configPath;
@@ -43,6 +52,12 @@ function render() {
   $('save-connection').disabled = busy || state.connected;
   $('disconnect').disabled = busy || (!state.connected && !state.connection && !state.lastError);
   $('exit').disabled = busy;
+  $('config-file').textContent = state.configFile;
+  if (!webDirty) $('web-port').value = state.web.port;
+  for (const input of document.querySelectorAll('#web-form input, #web-form button')) input.disabled = busy;
+  $('web-hint').textContent = state.web.restartRequired
+    ? '已保存，重启本程序后生效。当前地址：' + location.origin + '；下次地址：http://127.0.0.1:' + state.web.port + '/。退出后再双击 EXE。'
+    : '当前地址：' + location.origin + '/。网页端口默认 18185，与过滤端口分开。';
   for (const input of policyInputs) input.disabled = busy;
   $('enabled').checked = policy.enabled;
   for (const input of document.querySelectorAll('[name=cleanup]')) input.checked = input.value === policy.cleanup;
@@ -63,7 +78,7 @@ function render() {
   const older = state.activePolicies.filter(x => x.policyRevision !== state.revision).length;
   $('inflight').textContent = stats.activeRequests ? `正在处理 ${stats.activeRequests} 条请求${older ? `，其中 ${older} 条仍使用旧版策略` : ''}。进行中的请求不会因切换而中断。` : '没有进行中的请求。';
   $('connection-hint').textContent = dirty ? '有未保存的接入设置。保存后再开启总开关。'
-    : state.connected ? '已连接：如需更换地址或路径，请先断开并恢复。' : '接入后更改地址或路径，需先断开并恢复配置。';
+    : state.connected ? '已连接：改端口前先断开并恢复，重新接入后重启 Codex。' : '默认端口 18184，可更改。更改端口并重新接入后，需要重启 Codex。';
   const body = $('events'); body.replaceChildren();
   const recent = state.events.slice(-60).reverse();
   if (!recent.length) {
@@ -80,7 +95,7 @@ function render() {
 async function apply(settings) {
   if (busy || !state) return;
   busy = true;
-  for (const control of document.querySelectorAll('input, select, button')) control.disabled = true;
+  for (const control of document.querySelectorAll('#controls input, #controls select, #controls button')) control.disabled = true;
   try {
     state = await api('/api/settings', {revision: state.revision, settings});
     notice('已应用。新请求使用版本 ' + state.revision + '，已有请求保持原策略。');
@@ -108,8 +123,38 @@ $('connection-form').addEventListener('submit', async event => {
   if (!state || !$('connection-form').reportValidity()) return;
   const draft = readConnection();
   await apply(draft);
-  if (['configPath', 'upstream', 'port', 'client'].every(key => state.settings[key] === draft[key])) dirty = false;
+  if (state && ['configPath', 'upstream', 'port', 'client'].every(key => state.settings[key] === draft[key])) {
+    dirty = false;
+    notice('接入设置已保存。更改过滤端口后，重新开启接入并重启 Codex 才能使用新地址。');
+  }
   render();
+});
+$('web-form').addEventListener('input', () => { webDirty = true; });
+$('web-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (busy || !state || !$('web-form').reportValidity()) return;
+  const web = {port: Number($('web-port').value)};
+  if ($('web-token').value.trim()) web.token = $('web-token').value.trim();
+  busy = true; render();
+  try {
+    state = await api('/api/web', {revision: state.revision, web});
+    webDirty = false; $('web-token').value = '';
+    notice('网页设置已保存。退出本程序后再次双击 EXE，新端口或令牌才会生效。');
+  } catch (error) {
+    notice('未保存：' + error.message, true);
+    try { state = await api('/api/state'); } catch {}
+  } finally { busy = false; render(); }
+});
+$('login-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (busy || !$('login-form').reportValidity()) return;
+  token = $('login-token').value.trim(); busy = true; $('login-submit').disabled = true;
+  try {
+    state = await api('/api/state'); sessionStorage.setItem('console-token', token);
+    $('login-token').value = ''; dirty = webDirty = false; render();
+    notice(state.lastError ? '需要处理：' + state.lastError : '登录成功，已读取保存的配置。', !!state.lastError);
+  } catch (error) { notice(error.message, true); }
+  finally { busy = false; $('login-submit').disabled = false; render(); }
 });
 $('disconnect').addEventListener('click', async () => {
   if (busy || !state) return;
@@ -126,16 +171,17 @@ $('exit').addEventListener('click', async () => {
 });
 async function refresh() {
   if (exited) return;
-  if (!busy) {
+  if (!busy && token) {
     try {
       const next = await api('/api/state');
       if (!busy && (!state || next.revision >= state.revision)) {
         const first = !state; state = next; render();
         if (state.lastError) notice('需要处理：' + state.lastError, true);
-        else if (first) notice('控制台已就绪。总开关默认关闭，调整设置不会自动接管客户端。');
+        else if (first) notice('控制台已按保存的配置启动。仅首次生成配置时默认关闭核心过滤。');
       }
-    } catch (error) { notice('无法连接或会话已失效，请重新双击 EXE 打开控制台。' + error.message, true); }
+    } catch (error) { notice('无法连接或尚未登录：' + error.message, true); }
   }
   if (!exited) poll = setTimeout(refresh, document.hidden ? 5000 : 1500);
 }
+if (!token) { $('connection-state').textContent = '需要登录'; notice('请输入 EXE 同目录配置文件中的 web.token，或再次双击 EXE 自动登录。'); }
 refresh();

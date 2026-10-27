@@ -189,6 +189,8 @@ function createController({runtime, configStore}) {
     }),
     updateWeb: ({revision: expected, web, ...extra}) => serial(() => {
       if (closed || Object.keys(extra).length || expected !== revision) throw new Error('Settings revision changed or console is closed.');
+      if (!web || typeof web !== 'object' || Array.isArray(web)) throw new Error('Invalid web settings.');
+      web = {token: store.current.web.token, ...web};
       if (connection && (web.port === connection.port || Number(new URL(connection.upstream).port || 80) === web.port)) {
         throw new Error('Web port conflicts with the current connection.');
       }

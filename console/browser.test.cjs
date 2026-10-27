@@ -31,3 +31,16 @@ test('failed browser dispatch rejects instead of silently claiming success', asy
     }}), /browser|spawn/i);
   }
 });
+
+test('browser fallback identifies the active token cache without printing credentials', async () => {
+  const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
+  const messages = [];
+  const context = {module: {exports: {}}, __dirname, Buffer,
+    process: {platform: 'linux'}, console: {error: message => messages.push(message)},
+    require: name => name === './browser.cjs' ? {openBrowser: async () => { throw new Error('mock association failure'); }} : require(name)};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'main.cjs'), 'utf8') + '\nmodule.exports = openConsole;', context);
+  const token = 'ab'.repeat(32);
+  await context.module.exports({origin: 'http://127.0.0.1:18185'}, token, 'config.json', 'runtime/service.json');
+  assert.match(messages[0], /active token field from:\nruntime\/service.json/);
+  assert.equal(messages[0].includes(token), false);
+});

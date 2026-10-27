@@ -60,11 +60,12 @@ function verifyRunning(record, token) {
     req.setTimeout(1000, () => req.destroy()); req.on('error', () => resolve(false));
   });
 }
-async function openConsole(record, token, configFile) {
+async function openConsole(record, token, configFile, stateFile) {
   try { await openBrowser(record.origin + '/#token=' + token); }
   catch {
     const message = 'Cannot open the default browser. The console is still running.\n\nOpen: ' + record.origin
-      + '/\n\nRead web.token from:\n' + configFile;
+      + '/\n\nRead the active token field from:\n' + stateFile
+      + '\n\nConfigured web.token (next launch):\n' + configFile;
     console.error(message);
     showMessage(message);
   }
@@ -94,7 +95,7 @@ async function main(args = process.argv.slice(2)) {
         const owner = readJson(ownerFile), record = readJson(stateFile);
         const token = record?.token || readJson(options.configFile)?.web?.token;
         if (owner && record?.instance === owner.instance && record.pid === owner.pid && await verifyRunning(record, token)) {
-          if (options.open) await openConsole(record, token, options.configFile);
+          if (options.open) await openConsole(record, token, options.configFile, stateFile);
           console.log('Console already running at ' + record.origin);
           return {reused: true, origin: record.origin};
         }
@@ -143,7 +144,7 @@ async function main(args = process.argv.slice(2)) {
     const record = {service: SERVICE, pid: process.pid, instance, origin: 'http://127.0.0.1:' + port, token};
     atomicWrite(stateFile, JSON.stringify(record));
     process.on('SIGINT', signal); process.on('SIGTERM', signal);
-    if (options.open) await openConsole(record, token, options.configFile);
+    if (options.open) await openConsole(record, token, options.configFile, stateFile);
     console.log('Console ready at ' + record.origin + ' (core ' + (controller.status().settings.policy.enabled ? 'ON' : 'OFF') + ')');
     return {reused: false, origin: record.origin};
   } catch (error) {

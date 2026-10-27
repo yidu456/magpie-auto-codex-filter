@@ -6,8 +6,23 @@
 
 1. 双击 `dist/MagpieFilter.exe`，默认浏览器自动打开本地控制台。EXE 内含 Node 和网页资源，不需要另装 Node，也没有 Electron/Chromium 外壳。
 2. 确认 Codex 配置文件、Magpie 本机 HTTP 地址和过滤端口，点击“保存接入设置”。本程序不会替你配置账号、模型或启动 Magpie。
-3. 选择清理模式及异常处理项，打开“核心过滤”总开关。**每次启动总开关都默认关闭**；其他偏好会保留。
-4. 首次接入后，Codex 可能需要重开才能读取新地址。确认之后，模式和复选框切换只影响新请求，不需要重启过滤器或客户端。
+3. 选择清理模式及异常处理项，打开“核心过滤”总开关。**仅首次生成配置时默认关闭**；以后每次启动按配置文件的 `settings.policy.enabled` 决定是否自动接入。
+4. 首次接入后，Codex 可能需要重开才能读取新地址。过滤端口默认 **18184**，可改为 1024–65535 范围内可用且不冲突的端口：先“断开并恢复”→修改并保存→重新开启接入→**重启 Codex**。模式和复选框切换不需要重启。
+
+本次接续开发产物单独放在 **`dist/portable/MagpieFilter.exe`**，避免覆盖仍运行的旧 `dist/MagpieFilter.exe`。切换时先等任务结束、正常退出旧控制台并恢复地址，再启动新版；此次没有停止旧实例。
+
+## 便携配置与固定网页地址
+
+- 默认网页地址为 **http://127.0.0.1:18185/**，不再随机换端口；与过滤端口 18184 分开。网页端口被占用会报错，不自动抢占或换号。
+- 首次启动在 EXE 同目录生成 `MagpieFilter.config.json`，包含 `web.port`、`web.token`、客户端路径、上游、过滤端口和全部策略；自己的日志及恢复记录放在同目录 `.magpie-filter`。目录不可写会报错，不回退到 AppData。
+- 手动打开网页时输入配置中的 `web.token` 登录；双击 EXE 使用默认 HTTP 浏览器关联自动打开并登录。令牌输入会遮掩，API 不返回令牌。自动唤起失败时弹窗给出固定地址与当前生效令牌所在文件。
+- 网页保存原子写回同一配置文件。运行期间手工编辑文件后，网页拒绝用旧状态覆盖；退出并重启读取修改。不要删除尚需恢复的运行记录。
+- “网页与便携配置”可编辑网页端口和管理令牌。令牌为 **64 位十六进制**，留空保留；两项均下次启动生效。保存后先退出程序再双击，重复双击只会打开当前实例，不重启它。
+- 令牌修改待重启期间，当前实例仍使用旧令牌；`.magpie-filter/service.json` 的 `token` 是当前生效值的临时缓存，只用于重新打开，**不是另一份设置来源**。网页状态会提示待重启；不要公开这两个文件。
+- 退出会恢复客户端地址，**不会将保存的启用偏好改成关闭**。不希望下次自动接入时，先关总开关或在退出后将配置 `settings.policy.enabled` 改成 `false`。不安装系统开机自启动。
+- 如果自动接入或恢复失败，网页仍会显示“需要处理”，不会猜原地址或丢弃恢复备份。过滤端口占用等不涉及恢复的问题可修正后重试。
+
+“不写 C 盘”指本程序自己的数据。启用接入仍会修改你选定路径的 Codex 配置；默认浏览器和 Windows 自身的数据位置不由过滤器控制。旧 AppData 记录未迁移或删除。
 
 **已有旧过滤器时不要直接开启新控制台接管。** 请先等当前任务结束，在旧目录使用原停止脚本正常恢复地址；不要强杀旧进程、删除恢复文件或串联两个过滤器。新旧默认过滤端口都是 18184；端口冲突会拒绝启用。
 
@@ -47,7 +62,7 @@
 - “断开并恢复”还原本程序精确改写且未被用户更改的地址，但保留网页；更换端口、上游、配置路径前先断开。
 - “退出程序并恢复配置”恢复地址并结束服务。仍有请求（包括上传、退避、直通请求）时会拒绝退出，请等待结束或从客户端取消。
 - 若恢复失败或用户编辑后的地址仍指向该过滤端口，不关闭可用代理、不猜原地址；界面提示处理。异常终止后重新启动同一 runtime 会先检查恢复记录。
-- 默认状态目录为 `%LOCALAPPDATA%\MagpieFilterConsole`。其中 `service.json` 含本机控制令牌，`connection.json` / `routes.json` 用于恢复；不要公开、跨机器复制或删除尚需恢复的记录。
+- 默认状态目录为 EXE 同目录的 `.magpie-filter`。其中 `service.json` 缓存当前生效管理令牌，`connection.json` / `routes.json` 用于恢复；不要公开、跨机器复制或删除尚需恢复的记录。
 - 控制接口只监听 `127.0.0.1`，验证 token/Host/Origin，无远程脚本或字体。不要分享带 `#token=` 的控制台链接。
 - 请求事件不记录密钥、请求正文或模型正文。内存最多显示最近 200 个事件，页面最多展示最近 60 个；`console.log` 到约 1 MiB 时缩减至约 512 KiB，按容量保留，不承诺保留 24 小时。
 - 极少数启动中断若留下无有效 owner 的 `instance.lock` 会安全拒绝猜测归属；保留整个目录并人工诊断。正常崩溃恢复留下的 `instance.lock.retired-*` 是很小的旧锁身份记录，不含令牌，不影响运行。
@@ -72,6 +87,15 @@ npm run smoke:exe
 `.github/workflows/windows-build.yml` 可手动或推送 dev 后在 Windows runner 构建并上传 artifact，不自动发布 Release。此次仅完成本机构建，未推送、未运行远程工作流。
 
 根 `SHA256SUMS.txt` 校验可分发源码；`dist/SHA256SUMS.txt` 单独校验 EXE。不要分享 `.runtime`、`.verification`、`.planning`、`.playwright-mcp` 或 `%LOCALAPPDATA%` 中的运行状态。
+
+保留运行中的旧产物时，可单独构建并验收：
+
+```powershell
+node -e "require('./scripts/build.cjs').build({outputDirectory:'dist/portable'}).catch(e=>{console.error(e);process.exitCode=1})"
+node scripts/smoke-exe.cjs dist/portable/MagpieFilter.exe
+```
+
+浏览器验收工装：`node scripts/serve-ui-fixture.cjs [EXE路径]` 只建立工作区内的模拟配置与上游；用独立 Playwright 页面打开它输出的本地地址后执行 `scripts/browser-smoke.js`。该脚本拒绝修改非工装配置。测试结束在页面点击退出，工装也会结束。不要分享 `MagpieFilter.config.json` 或 `.magpie-filter`。
 
 ## 原独立版 CMD/CLI 说明
 
