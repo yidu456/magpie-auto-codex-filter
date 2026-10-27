@@ -1,43 +1,21 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
 const {randomBytes} = require('node:crypto');
-const {makeProxy, localOrigin, FilterError} = require('../magpie-auto-codex-filter/proxy.cjs');
+const {makeProxy, FilterError} = require('../magpie-auto-codex-filter/proxy.cjs');
 const {normalizePolicy} = require('../magpie-auto-codex-filter/policy.cjs');
 const {ConfigRouter, magpieEntries} = require('../magpie-auto-codex-filter/config.cjs');
 const {atomicWrite, sameEndpoint} = require('../magpie-auto-codex-filter/base-config.cjs');
 
-function validateSettings(value, revision) {
-  const keys = ['client', 'configPath', 'upstream', 'port', 'policy'];
-  if (!value || typeof value !== 'object' || Array.isArray(value)
-      || keys.some(k => !Object.hasOwn(value, k))
-      || Object.keys(value).some(k => !keys.includes(k))) throw new Error('Invalid settings fields.');
-  if (!value.policy || typeof value.policy.enabled !== 'boolean') throw new Error('Explicit core policy.enabled is required.');
-  if (value.client !== 'codex') throw new Error('Only Codex is supported.');
-  if (typeof value.configPath !== 'string' || !path.isAbsolute(value.configPath)
-      || !/\.toml$/i.test(value.configPath) || value.configPath.includes('\0')) throw new Error('Use an absolute Codex TOML config path.');
-  if (!Number.isInteger(value.port) || value.port < 1024 || value.port > 65535) throw new Error('Filter port must be 1024-65535.');
-  const upstream = localOrigin(value.upstream);
-  if (Number(new URL(upstream).port || 80) === value.port) throw new Error('Upstream and filter ports must differ.');
-  const policy = normalizePolicy(value.policy);
-  return Object.freeze({client: 'codex', configPath: path.resolve(value.configPath), upstream, port: value.port,
-    policy: normalizePolicy({...policy, revision})});
-}
+const {createConfigStore, validateSettings} = require('./configuration.cjs');
 
-function createController({runtime}) {
+function createController({runtime, configStore}) {
   runtime = path.resolve(runtime);
   fs.mkdirSync(runtime, {recursive: true});
   const file = name => path.join(runtime, name);
-  let revision = 0, settings = validateSettings({client: 'codex', port: 18184, upstream: 'http://127.0.0.1:3425',
-    configPath: path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'config.toml'), policy: {enabled: false}}, revision);
-  if (fs.existsSync(file('settings.json'))) {
-    const saved = JSON.parse(fs.readFileSync(file('settings.json'), 'utf8'));
-    if (saved.version !== 1 || !Number.isSafeInteger(saved.revision) || saved.revision < 0) throw new Error('Invalid saved settings version/revision.');
-    revision = saved.revision;
-    settings = validateSettings(saved.settings, revision);
-    settings = validateSettings({...settings, policy: {...settings.policy, enabled: false}}, revision);
-  }
+  const store = configStore || createConfigStore(path.join(runtime, 'MagpieFilter.config.json'));
+  let revision = store.current.revision, settings = store.current.settings;
+  const activeWeb = store.current.web;
   let proxy, router, connection, timer, transitioning = false, closed = false, lastError = null;
   let queue = Promise.resolve(), sequence = 0, logBytes = 0;
   const events = [], activePolicies = new Map();
@@ -64,8 +42,7 @@ function createController({runtime}) {
       fs.appendFileSync(file('console.log'), line, {mode: 0o600}); logBytes += Buffer.byteLength(line);
     } catch { /* Logging failure must not abort a model request or restoration. */ }
   };
-  const persist = (next, nextRevision) => atomicWrite(file('settings.json'), JSON.stringify({version: 1,
-    revision: nextRevision, settings: {...next, policy: {...next.policy, enabled: false}}}, null, 2));
+  const persist = (next, nextRevision) => store.save({settings: next}, nextRevision);
   const makeRouter = c => new ConfigRouter({configPath: c.configPath, backupPath: file('routes.json'),
     filterOrigin: 'http://127.0.0.1:' + c.port, getUpstream: () => c.upstream, mode: 'magpie-auto', log});
   const retireJournal = () => {
@@ -97,7 +74,10 @@ function createController({runtime}) {
       log('recovered');
     } catch (error) { lastError = error.message; }
   }
-  const status = () => ({revision, settings, connected: !!proxy?.listening,
+  const status = () => ({revision, settings, configFile: store.filename,
+    web: {port: store.current.web.port, activePort: activeWeb.port,
+      restartRequired: store.current.web.port !== activeWeb.port || store.current.web.token !== activeWeb.token},
+    connected: !!proxy?.listening,
     attached: router?.state === 'filtering', state: closed ? 'closed' : lastError ? 'needs-attention' : router?.state || 'idle',
     lastError, connection: connection ? {...connection} : null,
     stats: {...(proxy?.stats || {requests: 0, activeRequests: 0})},
@@ -113,11 +93,15 @@ function createController({runtime}) {
     if (proxy?.listening) await new Promise(resolve => { proxy.close(resolve); proxy.closeIdleConnections(); });
     proxy = null;
   };
-  const update = ({revision: expected, settings: value, ...extra} = {}) => serial(async () => {
+  const apply = async ({revision: expected, settings: value, ...extra} = {}, startup = false) => {
     if (closed) throw new Error('Console is closed.');
     if (Object.keys(extra).length) throw new Error('Invalid update fields.');
     if (expected !== revision) throw new Error('Settings changed in another tab. Reload before saving (revision conflict).');
-    const next = validateSettings(value, revision + 1);
+    store.checkUnchanged();
+    const next = store.validate({settings: value}, revision + (startup ? 0 : 1)).settings;
+    if (next.port === activeWeb.port || Number(new URL(next.upstream).port || 80) === activeWeb.port) {
+      throw new Error('Filter and upstream cannot use the active web port.');
+    }
     if (connection && ['configPath', 'upstream', 'port'].some(key => connection[key] !== next[key])) {
       throw new Error('Disconnect and restore the current connection before changing endpoints.');
     }
@@ -153,8 +137,8 @@ function createController({runtime}) {
         attachmentAttempted = true;
         router.sync();
       }
-      persist(next, revision + 1);
-      settings = next; revision++; lastError = null;
+      if (!startup) persist(next, revision + 1);
+      settings = next; if (!startup) revision++; lastError = null;
       if (fresh) {
         timer = setInterval(() => {
           if (transitioning || closed) return;
@@ -177,8 +161,8 @@ function createController({runtime}) {
       }
       throw error;
     } finally { transitioning = false; }
-  });
-  const disconnectInternal = async () => {
+  };
+  const disconnectInternal = async (preservePreference = false) => {
     if (proxy?.stats.activeRequests) throw new Error('There are active requests. Wait for completion or cancel them in the client first.');
     if (!connection && !fs.existsSync(file('connection.json'))) return status();
     if (!connection) throw new Error('Recovery journal is invalid. Preserve runtime files and repair the journal before exiting.');
@@ -186,7 +170,7 @@ function createController({runtime}) {
     try {
       restore();
       const next = validateSettings({...settings, policy: {...settings.policy, enabled: false}}, revision + 1);
-      persist(next, revision + 1);
+      if (!preservePreference) persist(next, revision + 1);
       settings = next; revision++;
       await stopListener(); retireJournal(); connection = router = null; lastError = null;
       log('disconnected');
@@ -194,9 +178,19 @@ function createController({runtime}) {
     } catch (error) { lastError = error.message; throw error; }
     finally { transitioning = false; }
   };
-  return {status, update, disconnect: () => serial(disconnectInternal), close: () => serial(async () => {
+  return {status, update: value => serial(() => apply(value)),
+    start: () => serial(() => settings.policy.enabled ? apply({revision, settings}, true) : status()),
+    updateWeb: ({revision: expected, web, ...extra}) => serial(() => {
+      if (closed || Object.keys(extra).length || expected !== revision) throw new Error('Settings revision changed or console is closed.');
+      if (connection && (web.port === connection.port || Number(new URL(connection.upstream).port || 80) === web.port)) {
+        throw new Error('Web port conflicts with the current connection.');
+      }
+      store.save({web}, revision + 1); revision++;
+      return status();
+    }),
+    disconnect: () => serial(() => disconnectInternal()), close: () => serial(async () => {
     if (closed) return;
-    await disconnectInternal(); closed = true;
+    await disconnectInternal(true); closed = true;
   })};
 }
 

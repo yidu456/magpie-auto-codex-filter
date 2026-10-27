@@ -4,7 +4,16 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {spawn} = require('node:child_process');
-const {fixture, call} = require('../magpie-auto-codex-filter/test-support.cjs');
+const http = require('node:http');
+const {fixture, call, listen, close} = require('../magpie-auto-codex-filter/test-support.cjs');
+
+async function portableFixture(t) {
+  const runtime = fixture(t), reservation = http.createServer();
+  const port = Number(new URL(await listen(reservation)).port); await close(reservation);
+  const store = require('./configuration.cjs').createConfigStore(path.join(runtime, 'MagpieFilter.config.json'));
+  store.save({web: {...store.current.web, port}}, 0);
+  return runtime;
+}
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function waitFor(fn, timeout = 8000) {
@@ -18,7 +27,11 @@ function start(runtime) {
   return child;
 }
 function readRecord(runtime) {
-  try { return JSON.parse(fs.readFileSync(path.join(runtime, 'service.json'), 'utf8')); } catch { return null; }
+  try {
+    const record = JSON.parse(fs.readFileSync(path.join(runtime, 'service.json'), 'utf8'));
+    const config = JSON.parse(fs.readFileSync(path.join(runtime, 'MagpieFilter.config.json'), 'utf8'));
+    return {...record, token: config.web.token};
+  } catch { return null; }
 }
 async function quit(record) {
   const headers = {'x-console-token': record.token, 'content-type': 'application/json'};
@@ -34,7 +47,7 @@ test('launcher is single-instance, inert by default and exits through authentica
       if (child.exitCode === null) await waitFor(() => child.exitCode !== null).catch(() => child.kill());
     }
   });
-  const runtime = fixture(t);
+  const runtime = await portableFixture(t);
   const first = start(runtime); children.push(first);
   record = await waitFor(() => readRecord(runtime));
   const headers = {'x-console-token': record.token};
@@ -42,6 +55,9 @@ test('launcher is single-instance, inert by default and exits through authentica
   assert.equal(state.application.pid, first.pid);
   assert.equal(state.application.instance, record.instance);
   assert.equal(state.settings.policy.enabled, false);
+  const config = JSON.parse(fs.readFileSync(path.join(runtime, 'MagpieFilter.config.json')));
+  assert.equal(record.origin, 'http://127.0.0.1:' + config.web.port);
+  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(path.join(runtime, 'service.json'))), 'token'), false);
   const second = start(runtime); children.push(second);
   await waitFor(() => second.exitCode !== null);
   assert.equal(second.exitCode, 0, second.output);
@@ -71,6 +87,8 @@ test('launcher arguments reject unknown flags and require explicit absolute runt
   assert.throws(() => parseArgs(['--runtime', 'relative']));
   assert.throws(() => parseArgs(['--mystery']));
   assert.equal(parseArgs(['--no-open']).open, false);
+  assert.equal(parseArgs([]).configFile, path.resolve(__dirname, '../MagpieFilter.config.json'));
+  assert.equal(parseArgs([]).runtime, path.resolve(__dirname, '../.magpie-filter'));
 });
 
 test('foreign service records are never overwritten even without a console lock', async t => {
@@ -94,7 +112,7 @@ test('a terminated owned process can be relaunched without keeping its activatio
     if (record) await quit(record).catch(() => {});
     for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill();
   });
-  const runtime = fixture(t), first = start(runtime); children.push(first);
+  const runtime = await portableFixture(t), first = start(runtime); children.push(first);
   record = await waitFor(() => readRecord(runtime));
   first.kill();
   await waitFor(() => first.exitCode !== null || first.signalCode !== null);
@@ -104,4 +122,38 @@ test('a terminated owned process can be relaunched without keeping its activatio
   const state = JSON.parse((await call(record.origin, '/api/state', {method: 'GET', headers: {'x-console-token': record.token}})).body);
   assert.equal(state.settings.policy.enabled, false);
   await quit(record); await waitFor(() => second.exitCode !== null); record = null;
+});
+
+test('configured web port conflicts fail without fallback or touching the client', async t => {
+  const runtime = await portableFixture(t), configFile = path.join(runtime, 'MagpieFilter.config.json');
+  const config = JSON.parse(fs.readFileSync(configFile));
+  const other = http.createServer((req, res) => res.end('other'));
+  t.after(() => close(other));
+  await new Promise(resolve => other.listen(config.web.port, '127.0.0.1', resolve));
+  const child = start(runtime); await waitFor(() => child.exitCode !== null);
+  assert.notEqual(child.exitCode, 0); assert.match(child.output, /EADDRINUSE|already in use/);
+  assert.equal(fs.existsSync(path.join(runtime, 'service.json')), false);
+  assert.equal((await call('http://127.0.0.1:' + config.web.port, '/', {method: 'GET'})).body, 'other');
+});
+
+test('fresh launch follows edited token, web port and enabled policy without resetting the file', async t => {
+  const runtime = await portableFixture(t), configFile = path.join(runtime, 'MagpieFilter.config.json');
+  const up = http.createServer((req, res) => {req.resume(); req.on('end', () => res.end('{}'));});
+  t.after(() => close(up)); const upstream = await listen(up);
+  const reservation = http.createServer(); const port = Number(new URL(await listen(reservation)).port); await close(reservation);
+  const configPath = path.join(runtime, 'mock.toml'), original = '[model_providers.mock]\nbase_url="' + upstream + '/v1"\n';
+  fs.writeFileSync(configPath, original);
+  const config = JSON.parse(fs.readFileSync(configFile));
+  config.web.token = 'bc'.repeat(32); config.settings = {...config.settings, configPath, port, upstream,
+    policy: {...config.settings.policy, enabled: true, cleanup: 'never'}};
+  fs.writeFileSync(configFile, JSON.stringify(config));
+  const child = start(runtime); let record;
+  t.after(async () => { if (record) await quit(record).catch(() => {}); if (child.exitCode === null) child.kill(); });
+  record = await waitFor(() => readRecord(runtime));
+  const state = JSON.parse((await call(record.origin, '/api/state', {method: 'GET', headers: {'x-console-token': config.web.token}})).body);
+  assert.equal(state.attached, true); assert.equal(state.settings.policy.enabled, true);
+  assert.equal(state.settings.policy.cleanup, 'never');
+  await quit(record); await waitFor(() => child.exitCode !== null);
+  assert.equal(JSON.parse(fs.readFileSync(configFile)).settings.policy.enabled, true);
+  assert.equal(fs.readFileSync(configPath, 'utf8'), original); record = null;
 });

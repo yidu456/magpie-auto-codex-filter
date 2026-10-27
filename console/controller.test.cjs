@@ -55,7 +55,8 @@ test('settings validation, stale writes and endpoint replacement cannot corrupt 
 
 test('atomic settings failure leaves the live policy and revision unchanged', async t => {
   const h = await setup(t), c = h.controller;
-  fs.mkdirSync(path.join(h.runtime, 'settings.json'));
+  const config = path.join(h.runtime, 'MagpieFilter.config.json');
+  fs.renameSync(config, config + '.saved'); fs.mkdirSync(config);
   await assert.rejects(c.update({revision: 0, settings: {...h.settings, policy: {...h.settings.policy, cleanup: 'never'}}}));
   assert.equal(c.status().revision, 0);
   assert.equal(c.status().settings.policy.cleanup, 'conditional');
@@ -71,7 +72,8 @@ test('omitting the core policy cannot implicitly enable interception', async t =
 
 test('activation write failure rolls back config and keeps saved preferences unchanged', async t => {
   const h = await setup(t);
-  fs.mkdirSync(path.join(h.runtime, 'settings.json'));
+  const config = path.join(h.runtime, 'MagpieFilter.config.json');
+  fs.renameSync(config, config + '.saved'); fs.mkdirSync(config);
   await assert.rejects(h.controller.update({revision: 0, settings: {...h.settings, policy: {...h.settings.policy, enabled: true}}}));
   assert.equal(fs.readFileSync(h.configPath, 'utf8'), h.original);
   assert.equal(h.controller.status().connected, false);
@@ -111,7 +113,7 @@ test('activation cannot adopt an unowned preexisting filter URL even when its po
   } finally { fs.writeFileSync(h.configPath, h.original); }
 });
 
-test('restoration preserves user endpoint edits and new launch always disables the core', async t => {
+test('exit preserves startup preference and explicit restart loads the saved policy', async t => {
   const h = await setup(t), c = h.controller;
   await c.update({revision: 0, settings: {...h.settings, policy: {...h.settings.policy, enabled: true, cleanup: 'never'}}});
   fs.writeFileSync(h.configPath, h.original.replace(h.settings.upstream, 'http://127.0.0.1:12345'));
@@ -119,8 +121,39 @@ test('restoration preserves user endpoint edits and new launch always disables t
   assert.match(fs.readFileSync(h.configPath, 'utf8'), /12345/);
   const reopened = require('./controller.cjs').createController({runtime: h.runtime});
   t.after(() => reopened.close());
-  assert.equal(reopened.status().settings.policy.enabled, false);
+  await reopened.start();
+  assert.equal(reopened.status().settings.policy.enabled, true);
   assert.equal(reopened.status().settings.policy.cleanup, 'never');
+});
+
+test('web edits persist in the portable config; disk edits block stale saves but not safe exit', async t => {
+  const h = await setup(t), c = h.controller;
+  await c.update({revision: 0, settings: {...h.settings, policy: {...h.settings.policy, enabled: true}}});
+  const file = path.join(h.runtime, 'MagpieFilter.config.json');
+  const config = JSON.parse(fs.readFileSync(file));
+  assert.equal(config.settings.policy.enabled, true);
+  assert.equal(fs.existsSync(path.join(h.runtime, 'settings.json')), false);
+  config.web.port = 19185; config.settings.policy.cleanup = 'never';
+  const text = JSON.stringify(config); fs.writeFileSync(file, text);
+  await assert.rejects(c.update({revision: c.status().revision, settings: c.status().settings}), /changed.*disk|restart/i);
+  await c.close();
+  assert.equal(fs.readFileSync(file, 'utf8'), text);
+  assert.equal(fs.readFileSync(h.configPath, 'utf8'), h.original);
+});
+
+test('manual enabled config starts correctly and close restores without erasing startup setting', async t => {
+  const h = await setup(t), file = path.join(h.runtime, 'MagpieFilter.config.json');
+  await h.controller.close();
+  const config = JSON.parse(fs.readFileSync(file));
+  config.settings = {...h.settings, policy: {...h.settings.policy, enabled: true, cleanup: 'always'}};
+  fs.writeFileSync(file, JSON.stringify(config));
+  const c = require('./controller.cjs').createController({runtime: h.runtime});
+  t.after(() => c.close()); await c.start();
+  assert.equal(c.status().attached, true);
+  assert.equal(c.status().settings.policy.cleanup, 'always');
+  await c.close();
+  assert.equal(JSON.parse(fs.readFileSync(file)).settings.policy.enabled, true);
+  assert.equal(fs.readFileSync(h.configPath, 'utf8'), h.original);
 });
 
 test('recovery journal restores a crashed attachment before accepting new configuration', async t => {

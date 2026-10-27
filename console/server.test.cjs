@@ -52,3 +52,24 @@ test('successful exit still closes the launcher if the browser disconnects durin
   await new Promise(resolve => setTimeout(resolve, 30));
   assert.equal(exits, 1);
 });
+
+test('web config is saved to the same file and token changes require restart without leaking it', async t => {
+  const fs = require('node:fs'), path = require('node:path'), runtime = fixture(t);
+  const controller = require('./controller.cjs').createController({runtime});
+  t.after(() => controller.close());
+  const original = JSON.parse(fs.readFileSync(path.join(runtime, 'MagpieFilter.config.json')));
+  const server = require('./server.cjs').createManagementServer({controller, token: original.web.token});
+  t.after(() => close(server)); const origin = await listen(server);
+  const headers = {'x-console-token': original.web.token, 'content-type': 'application/json'};
+  const result = await call(origin, '/api/web', {headers, body: JSON.stringify({revision: 0, web: {port: 19285, token: 'cd'.repeat(32)}})});
+  assert.equal(result.status, 200, result.body);
+  const state = JSON.parse(result.body);
+  assert.equal(state.web.port, 19285); assert.equal(state.web.restartRequired, true);
+  assert.doesNotMatch(result.body, /cdcdcdcd/);
+  const saved = JSON.parse(fs.readFileSync(path.join(runtime, 'MagpieFilter.config.json')));
+  assert.equal(saved.web.token, 'cd'.repeat(32));
+  assert.equal((await call(origin, '/api/state', {method: 'GET', headers})).status, 200);
+  assert.equal((await call(origin, '/api/state', {method: 'GET', headers: {'x-console-token': saved.web.token}})).status, 403);
+  const invalid = await call(origin, '/api/web', {headers, body: JSON.stringify({revision: state.revision, web: {port: 0, token: ''}})});
+  assert.equal(invalid.status, 400);
+});

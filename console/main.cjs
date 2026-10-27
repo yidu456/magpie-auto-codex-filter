@@ -1,7 +1,6 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
 const http = require('node:http');
 const {randomBytes} = require('node:crypto');
 const {spawn} = require('node:child_process');
@@ -10,6 +9,7 @@ const {atomicWrite} = require('../magpie-auto-codex-filter/base-config.cjs');
 const {createController} = require('./controller.cjs');
 const {createManagementServer} = require('./server.cjs');
 const {loadAssets} = require('./assets.cjs');
+const {createConfigStore} = require('./configuration.cjs');
 
 const SERVICE = 'magpie-filter-console-v1';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -18,29 +18,34 @@ function alive(pid) {
   try { process.kill(pid, 0); return true; } catch (error) { return error.code !== 'ESRCH'; }
 }
 function parseArgs(args) {
-  const options = {runtime: path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'MagpieFilterConsole'), open: true};
+  const directory = sea.isSea() ? path.dirname(process.execPath) : path.resolve(__dirname, '..');
+  const options = {runtime: path.join(directory, '.magpie-filter'),
+    configFile: path.join(directory, 'MagpieFilter.config.json'), open: true};
   const seen = new Set();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (seen.has(arg)) throw new Error('Duplicate option: ' + arg);
     seen.add(arg);
     if (arg === '--no-open') options.open = false;
-    else if (arg === '--runtime' && args[i + 1] && path.isAbsolute(args[i + 1])) options.runtime = path.resolve(args[++i]);
+    else if (arg === '--runtime' && args[i + 1] && path.isAbsolute(args[i + 1])) {
+      options.runtime = path.resolve(args[++i]);
+      options.configFile = path.join(options.runtime, 'MagpieFilter.config.json');
+    }
     else throw new Error('Use --runtime ABSOLUTE_PATH and/or --no-open.');
   }
   return options;
 }
 function readJson(file) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } }
-function verifyRunning(record) {
+function verifyRunning(record, token) {
   return new Promise(resolve => {
     let url;
     try {
       url = new URL(record?.origin);
       if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !/^\d+$/.test(url.port)
           || url.username || url.password || url.pathname !== '/' || url.search || url.hash
-          || typeof record.token !== 'string' || !/^[a-f0-9]{64}$/.test(record.token)) return resolve(false);
+          || typeof token !== 'string' || !/^[a-fA-F0-9]{64}$/.test(token)) return resolve(false);
     } catch { resolve(false); return; }
-    const req = http.get(url.origin + '/api/state', {headers: {'x-console-token': record.token}}, res => {
+    const req = http.get(url.origin + '/api/state', {headers: {'x-console-token': token}}, res => {
       let text = '';
       res.on('data', chunk => { text += chunk; if (text.length > 512 * 1024) req.destroy(); });
       res.on('error', () => resolve(false));
@@ -54,8 +59,8 @@ function verifyRunning(record) {
     req.setTimeout(1000, () => req.destroy()); req.on('error', () => resolve(false));
   });
 }
-function openBrowser(record) {
-  const url = record.origin + '/#token=' + record.token;
+function openBrowser(record, token) {
+  const url = record.origin + '/#token=' + token;
   const executable = process.platform === 'win32' ? path.join(process.env.WINDIR || 'C:\\Windows', 'explorer.exe')
     : process.platform === 'darwin' ? 'open' : 'xdg-open';
   const child = spawn(executable, [url], {detached: true, windowsHide: true, stdio: 'ignore'});
@@ -84,8 +89,9 @@ async function main(args = process.argv.slice(2)) {
       if (error.code !== 'EEXIST') throw error;
       for (let wait = 0; wait < 40; wait++) {
         const owner = readJson(ownerFile), record = readJson(stateFile);
-        if (owner && record?.instance === owner.instance && record.pid === owner.pid && await verifyRunning(record)) {
-          if (options.open) openBrowser(record);
+        const token = readJson(options.configFile)?.web?.token;
+        if (owner && record?.instance === owner.instance && record.pid === owner.pid && await verifyRunning(record, token)) {
+          if (options.open) openBrowser(record, token);
           console.log('Console already running at ' + record.origin);
           return {reused: true, origin: record.origin};
         }
@@ -119,21 +125,25 @@ async function main(args = process.argv.slice(2)) {
     if (fs.existsSync(stateFile) && (previous?.service !== SERVICE || alive(previous.pid))) {
       throw new Error('Existing service ownership cannot be verified. Keep the original runtime and retry after it exits.');
     }
-    // Lock ownership is verified before the controller may inspect recovery journals.
-    controller = createController({runtime});
-    const token = randomBytes(32).toString('hex');
-    const facade = {...controller, status: () => ({...controller.status(), application: {service: SERVICE, pid: process.pid, instance}})};
+    const store = createConfigStore(options.configFile), {token, port} = store.current.web;
+    const facade = {status: () => ({...controller.status(), application: {service: SERVICE, pid: process.pid, instance}}),
+      update: value => controller.update(value), updateWeb: value => controller.updateWeb(value),
+      disconnect: () => controller.disconnect(), close: () => controller.close()};
     server = createManagementServer({controller: facade, token, assets: loadAssets(), onExit: () => exit().catch(error => console.error(error.message))});
     await new Promise((resolve, reject) => {
-      server.once('error', reject); server.listen(0, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
+      server.once('error', reject); server.listen(port, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
     });
-    const record = {service: SERVICE, pid: process.pid, instance, token, origin: 'http://127.0.0.1:' + server.address().port};
+    // Bind the configured management port before any recovery or client configuration changes.
+    controller = createController({runtime, configStore: store});
+    await controller.start();
+    const record = {service: SERVICE, pid: process.pid, instance, origin: 'http://127.0.0.1:' + port};
     atomicWrite(stateFile, JSON.stringify(record));
     process.on('SIGINT', signal); process.on('SIGTERM', signal);
-    if (options.open) openBrowser(record);
-    console.log('Console ready at ' + record.origin + ' (core OFF)');
+    if (options.open) openBrowser(record, token);
+    console.log('Console ready at ' + record.origin + ' (core ' + (controller.status().settings.policy.enabled ? 'ON' : 'OFF') + ')');
     return {reused: false, origin: record.origin};
   } catch (error) {
+    if (controller) await controller.close();
     if (server?.listening) await new Promise(resolve => server.close(resolve));
     retire(); throw error;
   }
