@@ -43,6 +43,8 @@ const httpCases = [
   ['invalid parameter', 500, {error: {code: 'invalid_parameter', message: 'stream disconnected before completion'}}, 1],
   ['wrapped invalid parameter type', 502, {error: {code: 'cc_switch_upstream_error', type: 'invalid_parameter'}}, 1],
   ['invalid request', 502, {error: {type: 'invalid_request_error', message: 'invalid model'}}, 1],
+  ['unclassified invalid request type', 502, {error: {type: 'invalid_request_error', message: 'Bad payload'}}, 1],
+  ['unclassified invalid request code', 502, {error: {code: 'invalid_request_error', message: 'Invalid request'}}, 1],
   ['wrapped invalid parameters', 502, {error: {code: 'cc_switch_upstream_error', message: 'Invalid parameters: model'}}, 1],
   ['encrypted history', 500, {error: {code: 'invalid_encrypted_content', message: 'history invalid'}}, 1],
   ['encrypted history type', 500, {error: {type: 'invalid_encrypted_content'}}, 1],
@@ -71,6 +73,74 @@ test('HTTP relay recovery excludes business failures and non-object 5xx bodies',
       assert.equal(h.proxy.stats.resourceRetries, 0);
       assert.equal(h.proxy.stats.availabilityRetries, 0);
     });
+  }
+});
+
+test('invalid_request_error envelopes preserve recognized recovery and handler gates', async t => {
+  const cases = [
+    [400, 'stream_disconnected', '', 'transport'],
+    [400, 'stream_incomplete', '', 'transport'],
+    [400, 'upstream_idle_timeout', '', 'transport'],
+    [400, 'upstream_aborted', '', 'transport'],
+    [429, 'rate_limit_exceeded', '', 'rateLimit'],
+    [429, 'rate_limit_error', '', 'rateLimit'],
+    [400, 'too_many_requests', '', 'rateLimit'],
+    [503, 'no_available_channel', '', 'availability'],
+    [400, undefined, 'stream disconnected before completion', 'transport'],
+    [429, undefined, 'exceeded token rate limit', 'rateLimit'],
+    [503, undefined, 'No available channels', 'availability']
+  ];
+  for (const [status, code, message, kind] of cases) {
+    for (const sse of [false, true]) {
+      for (const enabled of [false, true]) {
+        await t.test((code || message) + ' SSE=' + sse + ' enabled=' + enabled, async t => {
+          let attempts = 0;
+          const handler = kind === 'transport' ? sse ? 'streamIncomplete' : 'transport'
+            : kind === 'availability' ? 'unavailable' : 'rateLimit';
+          const h = await harness(t, (req, res) => {
+            req.resume(); attempts++;
+            const error = {type: 'invalid_request_error', code, message};
+            res.writeHead(sse || attempts > 1 ? 200 : status,
+              {'content-type': sse ? 'text/event-stream' : 'application/json'});
+            res.end(sse ? attempts > 1 ? frame('response.completed') : frame('response.failed', {response: {error}})
+              : attempts > 1 ? '{}' : JSON.stringify({error}));
+          }, {handlers: {[handler]: enabled}});
+          const result = await call(h.origin, '/v1/responses', {body: '{"stream":true}'});
+          assert.equal(attempts, enabled ? 2 : 1);
+          assert.equal(result.status, enabled ? 200 : sse ? 502 : status);
+          for (const retryKind of ['resource', 'rateLimit', 'transport', 'availability']) {
+            assert.equal(h.proxy.stats[retryKind + 'Retries'], enabled && retryKind === kind ? 1 : 0);
+          }
+        });
+      }
+    }
+  }
+});
+
+test('explicit business details exclude recognized codes inside invalid_request_error envelopes', async t => {
+  const cases = [
+    [400, 'stream_disconnected', 'Invalid parameters: model'],
+    [429, 'rate_limit_exceeded', 'quota exhausted'],
+    [503, 'no_available_channel', 'Authentication failed'],
+    [400, 'stream_incomplete', 'Permission denied']
+  ];
+  for (const [status, code, message] of cases) {
+    for (const sse of [false, true]) {
+      await t.test(code + ' SSE=' + sse, async t => {
+        let attempts = 0;
+        const h = await harness(t, (req, res) => {
+          req.resume(); attempts++;
+          const error = {type: 'invalid_request_error', code, message};
+          res.writeHead(sse ? 200 : status, {'content-type': sse ? 'text/event-stream' : 'application/json'});
+          res.end(sse ? frame('response.failed', {response: {error}}) : JSON.stringify({error}));
+        });
+        const result = await call(h.origin, '/v1/responses', {body: '{"stream":true}'});
+        assert.equal(attempts, 1);
+        assert.equal(result.status, sse ? 502 : status);
+        assert.equal(h.proxy.stats.transportRetries + h.proxy.stats.rateLimitRetries
+          + h.proxy.stats.availabilityRetries + h.proxy.stats.resourceRetries, 0);
+      });
+    }
   }
 });
 

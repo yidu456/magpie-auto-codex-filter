@@ -160,12 +160,8 @@ function isBusinessError(value) {
   if (!error || typeof error !== 'object') return false;
   const text = [error.code, error.type, typeof error.message === 'string' ? error.message : ''].join(' ');
   if (/quota|budget|billing|balance|credit|spend.limit|authentication|authorization|permission|unauthorized|forbidden|invalid[_ -]api[_ -]key/i.test(text)) return true;
-  if ([error.code, error.type].some(code => /^(invalid_parameters?|invalid_params|invalid_argument|unsupported_parameter|model_not_found|context_length_exceeded)$/i.test(code))
-      || /invalid (?:parameters?|argument|model)|unsupported parameter/i.test(text)) return true;
-  // Gateways use invalid_request_error even for the supported cleanup/relay paths.
-  return [error.code, error.type].includes('invalid_request_error') && !isAzureResourceError(error)
-    && !['cc_switch_upstream_error', 'invalid_encrypted_content'].includes(error.code)
-    && !RELAY_ERROR_CODES.test(String(error.code || ''));
+  return [error.code, error.type].some(code => /^(invalid_parameters?|invalid_params|invalid_argument|unsupported_parameter|model_not_found|context_length_exceeded)$/i.test(code))
+    || /invalid (?:parameters?|argument|model)|unsupported parameter/i.test(text);
 }
 
 function retryErrorClass(value) {
@@ -638,7 +634,10 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
             const cleanupCode = policy.cleanup === 'conditional' && response.statusCode === 400 ? historyErrorCode(value) : null;
             const detail = value?.error || value?.response?.error || value;
             const excluded = [401, 403].includes(response.statusCode) || isBusinessError(value)
-              || !cleanupCode && [detail?.code, detail?.type].includes('invalid_encrypted_content');
+              || !cleanupCode && [detail?.code, detail?.type].includes('invalid_encrypted_content')
+              // A generic envelope must not mask recognized recovery; reject only unclassified request errors.
+              || !cleanupCode && !detected && [detail?.code, detail?.type].includes('invalid_request_error')
+                && detail?.code !== 'cc_switch_upstream_error';
             const kind = excluded ? null : cleanupCode ? 'resource' : albBadRequest ? 'transport' : ((detected === 'resource' && response.statusCode === 400)
               || (detected === 'rateLimit' && [400, 429].includes(response.statusCode))
               || (detected === 'availability' && response.statusCode === 503)
