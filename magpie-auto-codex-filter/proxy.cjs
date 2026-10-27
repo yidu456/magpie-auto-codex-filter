@@ -573,10 +573,12 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
             }
             phase = 'streaming'; observation('request-progress', {phase});
             let wire = source;
+            const inspectSse = !!inspectedParser || isResponses && isSse
+              && response.statusCode >= 200 && response.statusCode < 300;
             const parser = inspectedParser || makeSseParser({limit: ERROR_LIMIT,
               onUnavailable: unavailable, onEvent: terminalEvent});
             if (inspectedParser) source.on('data', chunk => parser.write(chunk));
-            if (!inspectedParser && isResponses && isSse && response.statusCode === 200) {
+            if (!inspectedParser && inspectSse) {
               let decoder;
               try { decoder = responseDecoder(response.headers['content-encoding']); }
               catch { unavailable('unsupported_encoding'); }
@@ -620,7 +622,7 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
               forwarded(response.statusCode);
               if (outcome === 'failed') return;
               if (!isSse) accepted(response);
-              else if (!isResponses || !available) outcome = 'unavailable';
+              else if (!inspectSse || !available) outcome = 'unavailable';
               else if (terminal === 'success') accepted(response);
               else {
                 outcome = 'failed';
@@ -767,6 +769,7 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
             if (size <= ERROR_LIMIT) return;
             response.removeListener('data', collect);
             response.removeListener('end', completed);
+            requestLog('http-error', {status: response.statusCode, kind: 'other', errorCode: 'http_' + response.statusCode});
             forward(Buffer.concat(chunks));
           };
           const completed = () => {

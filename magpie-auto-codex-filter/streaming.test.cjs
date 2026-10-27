@@ -155,6 +155,45 @@ test('core bypass HTTP errors have metadata without decoding response bodies', a
   assert.doesNotMatch(JSON.stringify(h.events), /private-error-text|foreign-account-ciphertext|arguments|result/);
 });
 
+test('oversized HTTP error bodies still emit one body-free fallback observation', async t => {
+  const marker = 'private-upstream-message';
+  const body = JSON.stringify({error: {code: 'invalid_api_key', message: marker + 'x'.repeat(70000)}});
+  const h = await harness(t, (req, res) => {
+    req.resume(); res.writeHead(401, {'content-type': 'application/json'}); res.end(body);
+  });
+  const result = await send(h);
+  assert.equal(result.status, 401);
+  assert.equal(result.body, body);
+  assert.deepEqual(eventsOf(h, 'http-error').map(({status, kind, errorCode}) => ({status, kind, errorCode})),
+    [{status: 401, kind: 'other', errorCode: 'http_401'}]);
+  assert.doesNotMatch(JSON.stringify(eventsOf(h, 'http-error')), new RegExp(marker));
+});
+
+test('direct successful 2xx SSE is inspected without changing status or bytes', async t => {
+  const text = frame('response.completed', {response: {usage: {input_tokens: 1, output_tokens: 2}}});
+  const h = await harness(t, (req, res) => {
+    req.resume(); res.writeHead(201, {'content-type': 'text/event-stream'}); res.end(text);
+  }, {protectStreamStart: false});
+  const result = await send(h);
+  assert.equal(result.status, 201);
+  assert.equal(result.body, text);
+  assert.deepEqual(eventsOf(h, 'response-usage').map(value => value.usage), [{input_tokens: 1, output_tokens: 2}]);
+  assert.equal(eventsOf(h, 'stream-error').length, 0);
+  assert.equal(eventsOf(h, 'request-finished')[0].outcome, 'success');
+});
+
+test('non-inspected SSE statuses do not fabricate stream incompletion', async t => {
+  const text = 'event: response.output_text.delta\ndata: {"delta":"redirect"}\n\n';
+  const h = await harness(t, (req, res) => {
+    req.resume(); res.writeHead(302, {'content-type': 'text/event-stream'}); res.end(text);
+  }, {protectStreamStart: false});
+  const result = await send(h);
+  assert.equal(result.status, 302);
+  assert.equal(result.body, text);
+  assert.equal(eventsOf(h, 'stream-error').length, 0);
+  assert.equal(eventsOf(h, 'request-finished')[0].outcome, 'unavailable');
+});
+
 test('prelude cap does not cap post-delta content in the same network chunk', async t => {
   const text = delta + frame('response.output_text.delta', {delta: 'x'.repeat(3000)}) + completed;
   const h = await harness(t, (req, res) => { req.resume(); sse(res); res.end(text); }, {}, {limit: 512});
