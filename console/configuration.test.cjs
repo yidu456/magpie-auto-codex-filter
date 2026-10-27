@@ -12,6 +12,8 @@ test('one portable file initializes once and reloads manually edited web and pol
   assert.equal(first.web.port, 18185);
   assert.match(first.web.token, /^[a-f0-9]{64}$/);
   assert.equal(first.settings.policy.enabled, false);
+  assert.equal(first.settings.policy.bufferResponse, true);
+  assert.equal(first.settings.policy.protectStreamStart, false);
   first.web.port = 19285; first.web.token = 'ab'.repeat(32);
   first.settings.policy.enabled = true; first.settings.policy.cleanup = 'always';
   first.settings.policy.handlers.rateLimit = false;
@@ -23,6 +25,22 @@ test('one portable file initializes once and reloads manually edited web and pol
   assert.equal(loaded.settings.policy.handlers.rateLimit, false);
   assert.throws(() => store.save({settings: loaded.settings}, 1), /changed.*disk|restart/i);
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), first);
+});
+
+test('version1 saved direct policies load protection OFF without rewriting bytes', t => {
+  const {createConfigStore} = require('./configuration.cjs');
+  const file = path.join(fixture(t), 'old.config.json');
+  const old = {version: 1, revision: 2, web: {port: 19285, token: 'ab'.repeat(32)},
+    settings: {client: 'codex', configPath: path.join(fixture(t), 'config.toml'), port: 19284,
+      upstream: 'http://127.0.0.1:3425', policy: {enabled: false, cleanup: 'conditional',
+        bufferResponse: false, heartbeat: true, revision: 2}}};
+  const bytes = '\uFEFF' + JSON.stringify(old, null, 4) + '\r\n';
+  fs.writeFileSync(file, bytes);
+  const policy = createConfigStore(file).current.settings.policy;
+  assert.equal(policy.protectStreamStart, false);
+  assert.equal(policy.bufferResponse, false);
+  assert.equal(policy.enabled, false);
+  assert.equal(fs.readFileSync(file, 'utf8'), bytes);
 });
 
 test('config rejects invalid JSON, weak token and conflicting ports without replacing user files', t => {

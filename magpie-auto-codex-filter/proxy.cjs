@@ -3,7 +3,8 @@
 const http = require('node:http');
 const zlib = require('node:zlib');
 const {timingSafeEqual} = require('node:crypto');
-const {StringDecoder} = require('node:string_decoder');
+const {Transform} = require('node:stream');
+const {makeSseParser, responseUsage, isContentEvent} = require('./sse.cjs');
 const {normalizePolicy} = require('./policy.cjs');
 const SERVICE = 'ccswitch-codex-reasoning-filter-v1';
 const MAGPIE_SERVICE = 'magpie-codex-filter-v1';
@@ -222,7 +223,7 @@ function responseDecoder(encoding) {
   }
 }
 
-function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = () => {}, getState = () => ({}), log = () => {}, limit = LIMIT,
+function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = () => {}, getState = () => ({}), log = () => {}, observe = () => {}, limit = LIMIT,
     retryDelay = retryDelayMs, heartbeatMs = 15000, idleTimeoutMs = 120000, deadlineMs = 1800000}) {
   const upstreamName = mode === 'ccswitch' ? 'CC Switch' : 'Magpie';
   const stats = {requests: 0, filteredRequests: 0, removedReasoningItems: 0, removedItemIds: 0,
@@ -235,12 +236,35 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
   let nextRequestId = 0;
   const server = http.createServer(async (req, res) => {
     let upstreamRequest, upstreamResponse, responseStream, retryTimer, deadlineTimer, heartbeatTimer;
-    let active = false, stopped = false, requestId, outcome, progressTimer;
+    let active = false, stopped = false, requestId, outcome, progressTimer, policy;
+    let observationStarted = false, delivered = false, usageObserved = false, responseFinished = false;
+    let model = null, requestedStream = null, control = false;
     const startedAt = Date.now();
+    const observation = (event, data = {}) => {
+      if (control) return;
+      try { Promise.resolve(observe(event, {requestId, ...data})).catch(() => {}); } catch {}
+    };
+    const startObservation = () => {
+      if (observationStarted || control) return;
+      requestId ??= ++nextRequestId;
+      observationStarted = true;
+      observation('request-started', {model, enabled: policy?.enabled ?? null,
+        streaming: requestedStream, policyRevision: policy?.revision ?? null});
+    };
+    const forwarded = status => {
+      if (delivered || res.destroyed) return;
+      delivered = true;
+      observation('forwarded', {ttfbMs: Date.now() - startedAt, status});
+    };
+    const observeUsage = value => {
+      const usage = responseUsage(value);
+      if (usage && !usageObserved) { usageObserved = true; observation('response-usage', {usage}); }
+    };
     const errorLabel = kind => ({resource: 'different_azure', rateLimit: 'rate_limit', transport: 'stream_incomplete',
       availability: 'no_available_channel'})[kind] || 'other';
     const cancel = () => {
       if (stopped) return;
+      if (!responseFinished && outcome !== 'failed') outcome = 'canceled';
       stopped = true;
       clearTimeout(retryTimer);
       clearTimeout(deadlineTimer);
@@ -253,9 +277,13 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
         stats.activeRequests--; active = false;
         log('request-finished', {requestId, outcome: outcome || 'canceled', durationMs: Date.now() - startedAt});
       }
+      if (!control) {
+        startObservation();
+        observation('request-finished', {outcome: outcome || 'canceled', durationMs: Date.now() - startedAt});
+      }
     };
     res.once('close', cancel);
-    res.once('finish', cancel);
+    res.once('finish', () => { responseFinished = true; cancel(); });
     req.once('aborted', cancel);
     try {
       if (!req.url.startsWith('/') || req.url.startsWith('//') || req.url.includes('\\')) {
@@ -274,12 +302,14 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
         throw new FilterError('browser_request_rejected', 'Browser requests are not supported.', 403);
       }
       if (route === ADMIN + '/health' && req.method === 'GET') {
+        control = true;
         res.writeHead(200, {'content-type': 'application/json'});
         res.end(JSON.stringify({service: serviceForMode(mode), filterVersion: FILTER_VERSION, mode, pid: process.pid, stats,
           retryPolicy: {maxRetries: MAX_RETRIES, limits: RETRY_LIMITS, deadlineMs}, ...getState()}));
         return;
       }
       if (route.startsWith(ADMIN)) {
+        control = true;
         const given = Buffer.from(String(req.headers['x-filter-token'] || ''));
         const expected = Buffer.from(String(token || ''));
         if (!expected.length || expected.length !== given.length || !timingSafeEqual(given, expected)) {
@@ -292,7 +322,7 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
         return;
       }
       // Snapshot before reading the body: retries must never adopt a newer policy.
-      const policy = normalizePolicy(getPolicy?.(), mode);
+      policy = normalizePolicy(getPolicy?.(), mode);
       if (policy.enabled && policy.cleanup === 'always' && /\/responses\/compact\/?$/.test(route)) {
         throw new FilterError('encrypted_compaction_disabled',
           'Encrypted Responses compaction is disabled. Use a text summary and start a new session.', 409);
@@ -301,18 +331,22 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
       if (Number(upstream.port || 80) === server.address().port) throw new FilterError('proxy_loop', upstreamName + ' and filter must use different ports.', 503);
       const headers = cleanHeaders(req.headers);
       headers.host = upstream.host;
-      let body, input, requestedStream = false, historyCleaned = false;
+      let body, input, historyCleaned = false;
       const isResponses = policy.enabled && /\/responses\/?$/.test(route) && req.method === 'POST';
       requestId = ++nextRequestId;
       stats.requests++;
       stats.activeRequests++;
       active = true;
+      startObservation();
+      observation('request-progress', {phase: 'upload'});
       if (isResponses) {
         const raw = decodeBody(await readBody(req, limit), req.headers['content-encoding'], limit);
         try { input = JSON.parse(raw.toString('utf8')); }
         catch { throw new FilterError('invalid_request_json', 'Responses request is not valid JSON.'); }
         const filtered = filterResponsesRequest(input, policy.cleanup === 'always' ? 'ccswitch' : 'magpie');
         requestedStream = filtered.body.stream === true;
+        model = typeof input.model === 'string' ? input.model.replace(/[\x00-\x1f\x7f]/g, '').slice(0, 120) : null;
+        observation('request-metadata', {model, streaming: requestedStream});
         body = policy.cleanup === 'always' ? Buffer.from(JSON.stringify(filtered.body)) : raw;
         delete headers['content-encoding'];
         delete headers.expect;
@@ -324,15 +358,23 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
         stats.lastFilteredAt = new Date().toISOString();
         log(policy.cleanup === 'conditional' ? 'history-preserved' : 'filtered',
           {requestId, removed: filtered.removed, removedItemIds: filtered.removedItemIds});
+        observation(policy.cleanup === 'always' ? 'filtered' : 'history-preserved',
+          {kept: Array.isArray(filtered.body.input) ? filtered.body.input.length : 0,
+            removed: filtered.removed, removedItemIds: filtered.removedItemIds});
       } else if (!policy.enabled) {
         body = await readBody(req, limit);
         headers['content-length'] = String(body.length);
       }
       if (res.destroyed || req.aborted) return;
+      startObservation();
       let retries = 0, phase = 'upstream';
       const retriesByKind = {resource: 0, rateLimit: 0, transport: 0, availability: 0};
       const retryKinds = new Set();
-      const requestLog = (event, data = {}) => log(event, {requestId, ...data});
+      const requestLog = (event, data = {}) => {
+        log(event, {requestId, ...data});
+        if (event !== 'request-started' && event !== 'upstream-error') observation(event, data);
+      };
+      observation('request-progress', {phase});
       requestLog('request-started', {streaming: requestedStream, maxRetries: MAX_RETRIES, retryLimits: RETRY_LIMITS, deadlineMs,
         policyRevision: policy.revision, cleanup: policy.cleanup, enabled: policy.enabled});
       progressTimer = setInterval(() => requestLog('request-progress', {
@@ -342,9 +384,10 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
       const deadlineAt = Date.now() + deadlineMs;
       let disposeAttempt = () => {};
       const startHeartbeat = () => {
-        if (!requestedStream || !policy.heartbeat || !policy.bufferResponse || heartbeatTimer) return;
+        if (!requestedStream || !policy.heartbeat || !(policy.bufferResponse || policy.protectStreamStart)
+            || delivered || heartbeatTimer) return;
         const beat = () => {
-          if (stopped || res.destroyed) return;
+          if (stopped || res.destroyed || res.writableNeedDrain) return;
           if (!res.headersSent) {
             res.writeHead(200, {'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache'});
             res.flushHeaders();
@@ -359,6 +402,7 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
       const finishError = (response, errorBody) => {
         outcome = 'failed';
         stopHeartbeat();
+        forwarded(res.headersSent ? res.statusCode : response.statusCode);
         if (res.headersSent) {
           let error;
           try { error = JSON.parse(decodeBody(errorBody, response.headers['content-encoding'], ERROR_LIMIT)); }
@@ -411,6 +455,7 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
         retries++;
         retriesByKind[kind]++;
         phase = 'backoff';
+        observation('request-progress', {phase});
         retryKinds.add(kind);
         requestLog('retry-scheduled', {kind, errorCode, retry: retries, maxRetries: MAX_RETRIES,
           kindRetry: retriesByKind[kind], maxKindRetries, delayMs});
@@ -419,6 +464,7 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
           if (stopped || res.destroyed) return;
           stats[kind + 'Retries']++;
           phase = 'upstream';
+          observation('request-progress', {phase});
           requestLog('retry-dispatched', {kind, errorCode, retry: retries, maxRetries: MAX_RETRIES,
             kindRetry: retriesByKind[kind], maxKindRetries});
           dispatch();
@@ -436,7 +482,9 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
         stats.upstreamErrors++;
         outcome = 'failed';
         requestLog('upstream-error', {code: error.code || error.message || 'timeout'});
+        observation('transport-error', {code: error.code || 'upstream_timeout', retryable: false});
         const code = mode === 'ccswitch' ? 'ccswitch_unavailable' : 'magpie_unavailable';
+        if (!res.headersSent || heartbeatTimer) forwarded(res.headersSent ? res.statusCode : 502);
         if (heartbeatTimer && res.headersSent) {
           res.end('event: error\ndata: ' + JSON.stringify({type: 'error', code,
             message: 'Cannot reach ' + upstreamName + ' or request deadline expired.'}) + '\n\n');
@@ -486,9 +534,29 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
               stats.upstreamHttpErrors++;
               requestLog('upstream-http-error', {status: response.statusCode});
             }
+          } else if (response.statusCode >= 400) {
+            observation('http-error', {status: response.statusCode, kind: 'other', errorCode: 'http_' + response.statusCode});
           }
           if (stopped || res.destroyed) { response.destroy(); return; }
-          const forward = prefix => {
+          let terminal = null, available = true;
+          const unavailable = reason => {
+            if (!available) return;
+            available = false;
+            observation('response-observation-unavailable', {reason});
+          };
+          const terminalEvent = (event, value) => {
+            if (event === 'error' || event === 'response.failed' || event === 'response.incomplete') {
+              if (terminal !== 'failed') {
+                const detail = value.error || value.response?.error || value;
+                requestLog('stream-error', {kind: retryErrorClass({...value, type: event}) || 'other',
+                  errorCode: String(detail.code || 'stream_incomplete').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80), retryable: false});
+              }
+              terminal = 'failed'; outcome = 'failed';
+            } else if (event === 'response.completed' && terminal !== 'failed') {
+              terminal = 'success'; observeUsage(value.response?.usage);
+            }
+          };
+          const forward = (prefix, source = response, inspectedParser = null) => {
             if (stopped || res.destroyed) return;
             settled = true;
             response.removeListener('error', attemptFailed);
@@ -496,20 +564,80 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
             response.on('error', failed);
             response.on('aborted', () => failed(new Error('upstream_aborted')));
             upstreamRequest.setTimeout(0);
-            if (response.statusCode >= 400) outcome = 'failed';
-            else outcome = 'success';
+            if (response.statusCode >= 400 || terminal === 'failed') outcome = 'failed';
+            else outcome = null;
             stopHeartbeat();
             if (!res.headersSent) {
               res.writeHead(response.statusCode, cleanHeaders(response.headers));
               res.flushHeaders();
             }
-            if (prefix) res.write(prefix);
-            response.pipe(res);
+            phase = 'streaming'; observation('request-progress', {phase});
+            let wire = source;
+            const parser = inspectedParser || makeSseParser({limit: ERROR_LIMIT,
+              onUnavailable: unavailable, onEvent: terminalEvent});
+            if (inspectedParser) source.on('data', chunk => parser.write(chunk));
+            if (!inspectedParser && isResponses && isSse && response.statusCode === 200) {
+              let decoder;
+              try { decoder = responseDecoder(response.headers['content-encoding']); }
+              catch { unavailable('unsupported_encoding'); }
+              decoder?.on('data', chunk => { parser.write(chunk); if (!parser.available) decoder.destroy(); });
+              decoder?.on('error', () => { unavailable('decode_error'); decoder.destroy(); });
+              wire = new Transform({
+                transform(chunk, encoding, callback) {
+                  forwarded(response.statusCode);
+                  if (decoder && !decoder.destroyed) {
+                    if (!decoder.write(chunk)) {
+                      let done = false;
+                      const ready = () => {
+                        if (done) return; done = true;
+                        decoder.removeListener('drain', ready); decoder.removeListener('close', ready);
+                        callback(null, chunk);
+                      };
+                      decoder.once('drain', ready); decoder.once('close', ready);
+                    } else callback(null, chunk);
+                  } else {
+                    if (available) parser.write(chunk);
+                    callback(null, chunk);
+                  }
+                },
+                final(callback) {
+                  if (!decoder || decoder.destroyed) { callback(); return; }
+                  let done = false;
+                  const ended = () => {
+                    if (done) return; done = true;
+                    decoder.removeListener('end', ended); decoder.removeListener('close', ended);
+                    callback();
+                  };
+                  decoder.once('end', ended); decoder.once('close', ended); decoder.end();
+                },
+                destroy(error, callback) { decoder?.destroy(); callback(error); }
+              });
+              responseStream = wire;
+              response.pipe(wire);
+            } else source.once('data', () => forwarded(response.statusCode));
+            wire.on('error', failed);
+            wire.once('end', () => {
+              forwarded(response.statusCode);
+              if (outcome === 'failed') return;
+              if (!isSse) accepted(response);
+              else if (!isResponses || !available) outcome = 'unavailable';
+              else if (terminal === 'success') accepted(response);
+              else {
+                outcome = 'failed';
+                requestLog('stream-error', {kind: 'transport', errorCode: 'stream_incomplete', retryable: false});
+              }
+            });
+            const pipe = () => { if (!stopped && !res.destroyed) wire.pipe(res); };
+            if (prefix?.length) {
+              forwarded(response.statusCode); wire.pause();
+              if (!res.write(prefix)) { res.once('drain', pipe); return; }
+            }
+            pipe();
           };
           response.on('error', attemptFailed);
           response.on('aborted', () => attemptFailed(new Error('upstream_aborted')));
           const isSse = /^text\/event-stream\b/i.test(String(response.headers['content-type'] || ''));
-          if (isResponses && policy.bufferResponse && response.statusCode === 200 && isSse) {
+          if (isResponses && (policy.bufferResponse || policy.protectStreamStart) && response.statusCode === 200 && isSse) {
             let stream;
             try {
               const decoder = responseDecoder(response.headers['content-encoding']);
@@ -517,13 +645,12 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
               if (decoder) {
                 delete response.headers['content-encoding'];
                 delete response.headers['content-length'];
-                decoder.on('error', attemptFailed);
+                decoder.on('error', error => settled ? failed(error) : attemptFailed(error));
               }
               responseStream = stream;
             } catch (error) { attemptFailed(error); return; }
-            const decoder = new StringDecoder('utf8');
             const chunks = [];
-            let size = 0, pending = '';
+            let size = 0, streaming = false;
             const detach = () => {
               stream.removeListener('data', inspect);
               stream.removeListener('end', ended);
@@ -531,35 +658,31 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
             const finish = (success = true) => {
               settled = true;
               detach();
+              parser.stop();
               if (success) accepted(response);
               else { outcome = 'failed'; stopHeartbeat(); }
               if (!res.headersSent) {
                 res.writeHead(200, cleanHeaders(response.headers)); res.flushHeaders();
               }
+              forwarded(200);
               res.end(Buffer.concat(chunks));
+              chunks.length = 0;
               discard();
             };
-            const inspect = chunk => {
-              if (discarded || settled || stopped) return;
-              chunks.push(chunk); size += chunk.length;
-              if (size > limit) {
-                settled = true; detach(); discard();
-              requestLog('response-buffer-exceeded', {limit, code: 'response_too_large'});
-                finishError({statusCode: 502, headers: {}}, Buffer.from(JSON.stringify({error: {
-                  code: 'response_too_large', message: 'Buffered response exceeds filter size limit.'}})));
-                return;
-              }
-              pending += decoder.write(chunk);
-              let boundary;
-              while ((boundary = /\r?\n\r?\n/.exec(pending))) {
-                const frame = pending.slice(0, boundary.index);
-                pending = pending.slice(boundary.index + boundary[0].length);
-                const lines = frame.split(/\r?\n/);
-                const data = lines.filter(line => /^data:/.test(line)).map(line => line.slice(5).replace(/^ /, '')).join('\n');
-                if (!data || data.trim() === '[DONE]') continue;
-                let value;
-                try { value = JSON.parse(data); } catch { continue; }
-                const event = lines.find(line => line.startsWith('event:'))?.slice(6).trim() || value.type;
+            const beginForward = () => {
+              if (streaming || policy.bufferResponse || settled || discarded) return;
+              streaming = true;
+              stream.pause(); detach();
+              parser.setLimit(ERROR_LIMIT);
+              const prefix = Buffer.concat(chunks); chunks.length = 0;
+              forward(prefix, stream, parser);
+            };
+            const parser = makeSseParser({limit, strict: false, onUnavailable: reason => {
+              unavailable(reason);
+              beginForward();
+            }, onEvent: (event, value) => {
+                if (discarded || stopped) return;
+                if (streaming) { terminalEvent(event, value); return; }
                 if (event === 'error' || event === 'response.failed') {
                   const parsedError = {...value, type: event};
                   const cleanupCode = policy.cleanup === 'conditional' ? historyErrorCode(parsedError) : null;
@@ -577,12 +700,12 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
                   const scheduled = kind && schedule(kind, response, cleanupCode || (relay ? code : errorLabel(kind)), cleanupCode,
                     relay ? 'transport' : undefined);
                   if (scheduled) {
-                    settled = true; detach();
+                    settled = true; detach(); parser.stop();
                     if (scheduled === true) stats.streamRetryErrors++;
                     discard();
                     return;
                   }
-                  settled = true; detach(); discard();
+                  settled = true; detach(); parser.stop(); discard();
                   // Failed output must not be delivered as executable client tools.
                   finishError({statusCode: 502, headers: {}}, Buffer.from(JSON.stringify({error:
                     missingDetails ? {type: 'upstream_error', code: 'upstream_failed_without_details',
@@ -590,8 +713,37 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
                       : value.error || value.response?.error || value})));
                   return;
                 }
-                if (event === 'response.completed') { finish(); return; }
-                if (event === 'response.incomplete') { finish(false); return; }
+                if (event === 'response.completed') {
+                  terminal = 'success';
+                  if (available) observeUsage(value.response?.usage);
+                  if (policy.bufferResponse) finish(); else beginForward();
+                  return;
+                }
+                if (event === 'response.incomplete') {
+                  terminal = 'failed'; outcome = 'failed';
+                  requestLog('stream-error', {kind: 'transport', errorCode: 'stream_incomplete', retryable: false});
+                  if (policy.bufferResponse) finish(false); else beginForward();
+                  return;
+                }
+                if (isContentEvent(event, value)) beginForward();
+            }});
+            const inspect = chunk => {
+              if (discarded || settled || stopped) return;
+              const room = limit - size;
+              const prelude = chunk.subarray(0, room);
+              size += prelude.length;
+              chunks.push(prelude);
+              parser.write(prelude);
+              if (chunk.length > room) {
+                if (streaming) {
+                  // Requeue the untouched tail; the normal pipe handles its backpressure.
+                  stream.unshift(chunk.subarray(room));
+                } else if (!settled && !discarded) {
+                  settled = true; detach(); discard();
+                  requestLog('response-buffer-exceeded', {limit, code: 'response_too_large'});
+                  finishError({statusCode: 502, headers: {}}, Buffer.from(JSON.stringify({error: {
+                    code: 'response_too_large', message: 'Buffered response exceeds filter size limit.'}})));
+                }
               }
             };
             const ended = () => {
@@ -604,9 +756,6 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
             return;
           }
           if (!isResponses || response.statusCode < 400) {
-            if (isResponses && retries && response.statusCode >= 200 && response.statusCode < 300) {
-              accepted(response);
-            }
             forward();
             return;
           }
@@ -664,7 +813,12 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
       startHeartbeat();
       dispatch();
     } catch (error) {
+      if (stopped || res.destroyed) return;
       stats.blockedRequests++;
+      outcome = 'failed';
+      startObservation();
+      observation('http-error', {status: error.status || 500, errorCode: error.code || 'local_filter_error', kind: 'local'});
+      forwarded(error.status || 500);
       log('blocked', {code: error.code || 'filter_error'});
       sendError(res, error instanceof FilterError ? error : new FilterError('local_filter_error', 'Local filter failed to handle request.', 500));
     }
