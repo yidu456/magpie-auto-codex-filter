@@ -280,7 +280,7 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
       }
       // Snapshot before reading the body: retries must never adopt a newer policy.
       const policy = normalizePolicy(getPolicy?.(), mode);
-      if (policy.cleanup === 'always' && /\/responses\/compact\/?$/.test(route)) {
+      if (policy.enabled && policy.cleanup === 'always' && /\/responses\/compact\/?$/.test(route)) {
         throw new FilterError('encrypted_compaction_disabled',
           'Encrypted Responses compaction is disabled. Use a text summary and start a new session.', 409);
       }
@@ -289,8 +289,11 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
       const headers = cleanHeaders(req.headers);
       headers.host = upstream.host;
       let body, input, requestedStream = false, historyCleaned = false;
-      const isResponses = /\/responses\/?$/.test(route) && req.method === 'POST';
+      const isResponses = policy.enabled && /\/responses\/?$/.test(route) && req.method === 'POST';
       requestId = ++nextRequestId;
+      stats.requests++;
+      stats.activeRequests++;
+      active = true;
       if (isResponses) {
         const raw = decodeBody(await readBody(req, limit), req.headers['content-encoding'], limit);
         try { input = JSON.parse(raw.toString('utf8')); }
@@ -308,11 +311,11 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
         stats.lastFilteredAt = new Date().toISOString();
         log(policy.cleanup === 'conditional' ? 'history-preserved' : 'filtered',
           {requestId, removed: filtered.removed, removedItemIds: filtered.removedItemIds});
+      } else if (!policy.enabled) {
+        body = await readBody(req, limit);
+        headers['content-length'] = String(body.length);
       }
       if (res.destroyed || req.aborted) return;
-      stats.requests++;
-      stats.activeRequests++;
-      active = true;
       let retries = 0, phase = 'upstream';
       const retriesByKind = {resource: 0, rateLimit: 0, transport: 0, availability: 0};
       const retryKinds = new Set();
@@ -326,7 +329,7 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
       const deadlineAt = Date.now() + deadlineMs;
       let disposeAttempt = () => {};
       const startHeartbeat = () => {
-        if (!requestedStream || heartbeatTimer) return;
+        if (!requestedStream || !policy.heartbeat || !policy.bufferResponse || heartbeatTimer) return;
         const beat = () => {
           if (stopped || res.destroyed) return;
           if (!res.headersSent) {
@@ -453,7 +456,9 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
           settled = true;
           discard();
           requestLog('transport-error', {code: error.code || error.message || 'stream_closed', errorCode: 'stream_incomplete', retryable: isResponses});
-          const handler = error.message === 'stream_closed_before_completed' ? 'streamIncomplete' : 'transport';
+          const handler = error.message === 'stream_closed_before_completed'
+            || error.message !== 'upstream_idle_timeout' && /^text\/event-stream\b/i.test(String(upstreamResponse?.headers['content-type'] || ''))
+            ? 'streamIncomplete' : 'transport';
           if (isResponses && schedule('transport', {headers: {}}, 'stream_incomplete', null, handler)) return;
           finishError({statusCode: 502, headers: {}}, Buffer.from(JSON.stringify({error: {
             code: 'stream_incomplete', message: 'Upstream stream disconnected before completion or timed out.'}})));
@@ -491,7 +496,7 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
           response.on('error', attemptFailed);
           response.on('aborted', () => attemptFailed(new Error('upstream_aborted')));
           const isSse = /^text\/event-stream\b/i.test(String(response.headers['content-type'] || ''));
-          if (isResponses && response.statusCode === 200 && isSse) {
+          if (isResponses && policy.bufferResponse && response.statusCode === 200 && isSse) {
             let stream;
             try {
               const decoder = responseDecoder(response.headers['content-encoding']);

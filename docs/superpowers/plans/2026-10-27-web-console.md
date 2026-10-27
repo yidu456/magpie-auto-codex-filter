@@ -71,7 +71,7 @@ const cleaningMode = policy.cleanup === 'always' ? 'ccswitch' : 'magpie';
 
 **Interfaces:** `enabled=false` preserves request body bytes and content encoding; removes only routing/hop-by-hop headers. `bufferResponse=false` bypasses SSE inspection, never replays once headers/output are forwarded. `heartbeat=false` disables synthesized progress only.
 
-- [ ] Add failing tests for invalid-JSON passthrough, gzip byte equality, immediate SSE delivery before mock completion, late failure without replay, core snapshot while uploading, no synthetic heartbeat when disabled.
+- [x] Add failing tests for invalid-JSON passthrough, gzip byte equality, immediate SSE delivery before mock completion, late failure without replay, core snapshot while uploading, no synthetic heartbeat when disabled.
 
 ```js
 // Upstream writes a first frame and waits on a test gate.
@@ -80,8 +80,8 @@ assert.equal(upstreamAttempts, 1); // including a late response.failed
 assert.deepEqual(receivedBytes, sentCompressedBytes); // core OFF
 ```
 
-- [ ] Run targeted tests, confirm failure; implement bypass using existing forwarding/cancellation path, bounded raw request reading and preserved routing validation.
-- [ ] Run all tests, review against legacy tests; commit `feat: add core bypass and selectable stream buffering`.
+- [x] Run targeted tests, confirm failure; implement bypass using existing forwarding/cancellation path, bounded raw request reading and preserved routing validation.
+- [x] Run all tests, review against legacy tests; commit `feat: add core bypass and selectable stream buffering`.
 
 ## Task 3: Controller and secure management API
 

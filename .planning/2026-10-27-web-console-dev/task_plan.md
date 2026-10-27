@@ -4,10 +4,10 @@
 Build the approved local console and EXE on dev, with a verified commit per step.
 
 ## Next Step
-Task 2: bypass and streaming (test first).
+Task 3: controller and management API (test first).
 
 ## Current Phase
-Phase 3
+Phase 4
 
 ## Phases
 
@@ -19,10 +19,10 @@ Phase 3
 **Status:** complete
 
 ### Phase 3: Bypass and streaming
-**Status:** in_progress
+**Status:** complete
 
 ### Phase 4: Controller and API
-**Status:** pending
+**Status:** in_progress
 
 ### Phase 5: Browser UI
 **Status:** pending

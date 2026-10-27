@@ -99,4 +99,89 @@ test('requests keep their policy revision through retry while new requests see u
   assert.deepEqual(logs.filter(x => x.event === 'request-started').map(x => x.policyRevision), [1, 2]);
 });
 
-module.exports = {harness, frame};
+test('core OFF preserves compressed bytes and forwards invalid JSON without retry', async t => {
+  const zlib = require('node:zlib');
+  const seen = [];
+  const h = await harness(t, (req, res) => {
+    const chunks = []; req.on('data', c => chunks.push(c));
+    req.on('end', () => {
+      seen.push({body: Buffer.concat(chunks), encoding: req.headers['content-encoding'], url: req.url});
+      res.writeHead(429); res.end('{"error":{"code":"rate_limit_exceeded"}}');
+    });
+  }, {getPolicy: () => ({enabled: false, cleanup: 'always'})});
+  const compressed = zlib.gzipSync(Buffer.from('not json'));
+  const result = await call(h.origin, '/magpie/v1/responses', {
+    body: compressed, headers: {'content-encoding': 'gzip'}
+  });
+  assert.equal(result.status, 429);
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0], {body: compressed, encoding: 'gzip', url: '/v1/responses'});
+  assert.equal((await call(h.origin, '/magpie/v1/responses/compact', {body: '{}'})).status, 429);
+});
+
+test('unbuffered SSE is delivered before completion and late failure is never replayed', async t => {
+  let attempts = 0, release;
+  const gate = new Promise(resolve => { release = resolve; });
+  t.after(release);
+  const h = await harness(t, (req, res) => {
+    req.resume(); req.on('end', async () => {
+      attempts++; res.writeHead(200, {'content-type': 'text/event-stream'});
+      res.write(frame('response.output_text.delta', {delta: 'first'}));
+      await gate;
+      res.end(frame('response.failed', {error: azure}));
+    });
+  }, {getPolicy: () => ({bufferResponse: false})});
+  await new Promise((resolve, reject) => {
+    let text = '';
+    const req = http.request(h.origin + '/v1/responses', {method: 'POST'}, res => {
+      res.on('data', chunk => {
+        text += chunk;
+        if (text.includes('first')) release();
+      });
+      res.on('error', reject);
+      res.on('end', () => {
+        try { assert.match(text, /response.failed/); assert.equal(attempts, 1); resolve(); }
+        catch (e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(500, () => req.destroy(new Error('first frame was buffered')));
+    req.end(JSON.stringify(sample));
+  });
+});
+
+test('heartbeat OFF removes synthetic progress without changing buffered success', async t => {
+  const h = await harness(t, (req, res) => {
+    req.resume(); req.on('end', () => {
+      res.writeHead(200, {'content-type': 'text/event-stream'});
+      setTimeout(() => res.end(frame('response.completed')), 70);
+    });
+  }, {heartbeatMs: 5, getPolicy: () => ({heartbeat: false})});
+  const result = await h.send();
+  assert.match(result.body, /response.completed/);
+  assert.doesNotMatch(result.body, /resp_filter_|response.in_progress/);
+});
+
+test('uploading requests count as active and keep the policy captured at headers', async t => {
+  let policy = {cleanup: 'always'}, captured;
+  const h = await harness(t, (req, res) => {
+    let text = ''; req.on('data', c => { text += c; });
+    req.on('end', () => { captured = JSON.parse(text); res.end('{}'); });
+  }, {getPolicy: () => policy});
+  const text = JSON.stringify(sample);
+  let req;
+  const finished = new Promise((resolve, reject) => {
+    req = http.request(h.origin + '/v1/responses', {method: 'POST', headers: {'content-length': Buffer.byteLength(text)}}, res => {
+      res.resume(); res.on('end', resolve); res.on('error', reject);
+    });
+    req.on('error', reject); req.write(text.slice(0, 15));
+  });
+  t.after(() => req.destroy());
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const active = h.proxy.stats.activeRequests;
+  policy = {cleanup: 'never'};
+  req.end(text.slice(15)); await finished;
+  assert.equal(active, 1);
+  assert.equal(captured.input.some(x => x.type === 'reasoning'), false);
+  assert.equal(h.proxy.stats.activeRequests, 0);
+});
