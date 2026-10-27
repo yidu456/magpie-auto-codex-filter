@@ -1,0 +1,24 @@
+name: Windows console build
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.12.0
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: npm run build
+      - run: npm run smoke:exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MagpieFilter-windows-x64-dev
+          path: dist/*

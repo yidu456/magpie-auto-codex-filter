@@ -1,2 +1,6 @@
 .runtime/
 .verification/
+node_modules/
+dist/
+.build/
+.playwright-mcp/

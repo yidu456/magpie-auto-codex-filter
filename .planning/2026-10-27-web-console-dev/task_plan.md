@@ -4,10 +4,10 @@
 Build the approved local console and EXE on dev, with a verified commit per step.
 
 ## Next Step
-Task 5: launcher and Windows EXE.
+Task 6: final verification, documentation and source manifest.
 
 ## Current Phase
-Phase 6
+Phase 7
 
 ## Phases
 
@@ -28,10 +28,10 @@ Phase 6
 **Status:** complete
 
 ### Phase 6: Launcher and EXE
-**Status:** in_progress
+**Status:** complete
 
 ### Phase 7: Validation and handoff
-**Status:** pending
+**Status:** in_progress
 
 ## Decisions
 - Work in supplied checkout on literal dev branch; no extra worktree or push.

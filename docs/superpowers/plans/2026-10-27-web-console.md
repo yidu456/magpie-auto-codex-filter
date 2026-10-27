@@ -125,9 +125,9 @@ assert.equal(fs.readFileSync(config, 'utf8'), original);
 
 **Interfaces:** `node console/main.cjs [--runtime PATH] [--no-open]` starts console with core OFF; same EXE args work. Default runtime under LOCALAPPDATA/MagpieFilterConsole; `--runtime` permits isolated tests. `--no-open` is for explicit headless testing. SEA embeds UI through build-time asset bundling. Singleton record uses process identity/token/management URL; mismatched or live-unresponsive records fail safely.
 
-- [ ] Add launcher integration test using spawned real process, fixture runtime, authenticated exit and second-launch PID equality.
-- [ ] Implement launch locks, stale-process verification, browser opening without shell interpolation, graceful signals and exact cleanup.
-- [ ] Pin build dependencies, bundle one CJS entry, generate SEA blob, inject into copied node.exe, set GUI subsystem with validated PE offsets, write SHA256 and license artifacts.
+- [x] Add launcher integration test using spawned real process, fixture runtime, authenticated exit and second-launch PID equality.
+- [x] Implement launch locks, stale-process verification, browser opening without shell interpolation, graceful signals and exact cleanup.
+- [x] Pin build dependencies, bundle one CJS entry, generate SEA blob, inject into copied node.exe, set GUI subsystem with validated PE offsets, write SHA256 and license artifacts.
 
 ```powershell
 npm ci
@@ -136,7 +136,7 @@ node --test console/launcher.test.cjs
 node scripts/smoke-exe.cjs dist/MagpieFilter.exe
 ```
 
-- [ ] Verify packaged no-Node startup, duplicate launch and safe exit with isolated runtime; commit `build: package local console as a Windows executable`.
+- [x] Verify packaged no-Node startup, duplicate launch and safe exit with isolated runtime; commit `build: package local console as a Windows executable`.
 
 ## Task 6: End-to-end validation and handoff
 

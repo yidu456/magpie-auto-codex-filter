@@ -1,0 +1,20 @@
+{
+  "name": "magpie-filter-console",
+  "version": "0.1.0-dev",
+  "private": true,
+  "description": "Local Codex/Magpie filter console",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24.12.0"
+  },
+  "scripts": {
+    "test": "node --test magpie-auto-codex-filter/*.test.cjs console/*.test.cjs scripts/*.test.cjs",
+    "start": "node console/main.cjs",
+    "build": "node scripts/build.cjs",
+    "smoke:exe": "node scripts/smoke-exe.cjs dist/MagpieFilter.exe"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "postject": "1.0.0-alpha.6"
+  }
+}
