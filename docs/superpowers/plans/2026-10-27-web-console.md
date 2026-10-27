@@ -37,7 +37,7 @@
 - [x] Read source, applicable instructions and prior assessment; create `dev` from clean `main`.
 - [x] Run legacy tests: 58 passed, 0 failed.
 - [x] Record approved scope, checkbox matrix, security boundaries and interfaces.
-- [ ] Self-review plan against spec; commit `docs: plan local web console development`.
+- [x] Self-review plan against spec; commit `docs: plan local web console development`.
 
 ## Task 1: Immutable runtime policy and granular recovery
 
@@ -45,7 +45,7 @@
 
 **Interfaces:** `normalizePolicy(value, mode='magpie-auto')` returns frozen `{enabled, cleanup, handlers, bufferResponse, heartbeat, revision}`; `makeProxy({getPolicy,...})` reads exactly once per model request; missing getter retains CLI defaults. Handlers have the seven keys in the spec. `server.stats` exposes existing counters to its owning controller.
 
-- [ ] Write failing validation and actual mock-upstream tests: never/always/conditional; each disabled handler; invalid fields; in-flight policy snapshot during backoff.
+- [x] Write failing validation and actual mock-upstream tests: never/always/conditional; each disabled handler; invalid fields; in-flight policy snapshot during backoff.
 
 ```js
 assert.throws(() => normalizePolicy({handlers: {unknown: true}}));
@@ -54,8 +54,8 @@ assert.throws(() => normalizePolicy({enabled: 'false'}));
 // Gate old request before retry, update getPolicy, release: old request retains its policy.
 ```
 
-- [ ] Run `node --test magpie-auto-codex-filter/policy*.test.cjs`; confirm missing policy fails.
-- [ ] Implement strict own-key/type validation; capture before body read; gate `schedule` by handler, preserve error classifiers/budgets; log revision on request-start.
+- [x] Run `node --test magpie-auto-codex-filter/policy*.test.cjs`; confirm missing policy fails.
+- [x] Implement strict own-key/type validation; capture before body read; gate `schedule` by handler, preserve error classifiers/budgets; log revision on request-start.
 
 ```js
 const policy = normalizePolicy(getPolicy?.(), mode);
@@ -63,7 +63,7 @@ const cleaningMode = policy.cleanup === 'always' ? 'ccswitch' : 'magpie';
 // schedule() gets an explicit handler when transport/ALB/SSE share a budget.
 ```
 
-- [ ] Run all tests and inspect diff; update progress; commit `feat: add hot runtime policies and recovery switches`.
+- [x] Run all tests and inspect diff; update progress; commit `feat: add hot runtime policies and recovery switches`.
 
 ## Task 2: Core bypass and optional streaming/heartbeat
 

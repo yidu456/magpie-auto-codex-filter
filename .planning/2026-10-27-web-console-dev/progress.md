@@ -4,3 +4,4 @@
 - Created dev from cd68b07 (main unchanged). Legacy suite: 58/58 pass.
 - Wrote and reviewed design plus six implementation tasks with interfaces/tests/commits.
 - No real client config/runtime changed; no paid requests or service restarts.
+- Task 1: confirmed red against stock proxy; immutable policy, seven handler gates, stable service identity and retry snapshots implemented. All 83 tests pass; diff reviewed.

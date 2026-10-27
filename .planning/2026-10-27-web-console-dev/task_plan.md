@@ -4,10 +4,10 @@
 Build the approved local console and EXE on dev, with a verified commit per step.
 
 ## Next Step
-Task 1: immutable policy and selected recovery handlers (test first).
+Task 2: bypass and streaming (test first).
 
 ## Current Phase
-Phase 2
+Phase 3
 
 ## Phases
 
@@ -16,10 +16,10 @@ Phase 2
 - Spec and implementation plan in docs/superpowers; 58 baseline tests pass.
 
 ### Phase 2: Runtime policy and recovery switches
-**Status:** in_progress
+**Status:** complete
 
 ### Phase 3: Bypass and streaming
-**Status:** pending
+**Status:** in_progress
 
 ### Phase 4: Controller and API
 **Status:** pending

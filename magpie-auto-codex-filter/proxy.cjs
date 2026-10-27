@@ -4,6 +4,7 @@ const http = require('node:http');
 const zlib = require('node:zlib');
 const {timingSafeEqual} = require('node:crypto');
 const {StringDecoder} = require('node:string_decoder');
+const {normalizePolicy} = require('./policy.cjs');
 const SERVICE = 'ccswitch-codex-reasoning-filter-v1';
 const MAGPIE_SERVICE = 'magpie-codex-filter-v1';
 const MAGPIE_CCS_SERVICE = 'magpie-ccs-codex-filter-v1';
@@ -208,7 +209,7 @@ function responseDecoder(encoding) {
   }
 }
 
-function makeProxy({getUpstream, token, mode = 'ccswitch', onStop = () => {}, getState = () => ({}), log = () => {}, limit = LIMIT,
+function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = () => {}, getState = () => ({}), log = () => {}, limit = LIMIT,
     retryDelay = retryDelayMs, heartbeatMs = 15000, idleTimeoutMs = 120000, deadlineMs = 1800000}) {
   const upstreamName = mode === 'ccswitch' ? 'CC Switch' : 'Magpie';
   const stats = {requests: 0, filteredRequests: 0, removedReasoningItems: 0, removedItemIds: 0,
@@ -277,7 +278,9 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', onStop = () => {}, ge
         res.end('{"stopping":true}');
         return;
       }
-      if (mode !== 'magpie' && mode !== 'magpie-auto' && /\/responses\/compact\/?$/.test(route)) {
+      // Snapshot before reading the body: retries must never adopt a newer policy.
+      const policy = normalizePolicy(getPolicy?.(), mode);
+      if (policy.cleanup === 'always' && /\/responses\/compact\/?$/.test(route)) {
         throw new FilterError('encrypted_compaction_disabled',
           'Encrypted Responses compaction is disabled. Use a text summary and start a new session.', 409);
       }
@@ -292,7 +295,7 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', onStop = () => {}, ge
         const raw = decodeBody(await readBody(req, limit), req.headers['content-encoding'], limit);
         try { input = JSON.parse(raw.toString('utf8')); }
         catch { throw new FilterError('invalid_request_json', 'Responses request is not valid JSON.'); }
-        const filtered = filterResponsesRequest(input, mode);
+        const filtered = filterResponsesRequest(input, policy.cleanup === 'always' ? 'ccswitch' : 'magpie');
         requestedStream = filtered.body.stream === true;
         body = Buffer.from(JSON.stringify(filtered.body));
         delete headers['content-encoding'];
@@ -303,7 +306,7 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', onStop = () => {}, ge
         stats.removedReasoningItems += filtered.removed;
         stats.removedItemIds += filtered.removedItemIds;
         stats.lastFilteredAt = new Date().toISOString();
-        log(mode === 'magpie-auto' ? 'history-preserved' : 'filtered',
+        log(policy.cleanup === 'conditional' ? 'history-preserved' : 'filtered',
           {requestId, removed: filtered.removed, removedItemIds: filtered.removedItemIds});
       }
       if (res.destroyed || req.aborted) return;
@@ -314,7 +317,8 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', onStop = () => {}, ge
       const retriesByKind = {resource: 0, rateLimit: 0, transport: 0, availability: 0};
       const retryKinds = new Set();
       const requestLog = (event, data = {}) => log(event, {requestId, ...data});
-      requestLog('request-started', {streaming: requestedStream, maxRetries: MAX_RETRIES, retryLimits: RETRY_LIMITS, deadlineMs});
+      requestLog('request-started', {streaming: requestedStream, maxRetries: MAX_RETRIES, retryLimits: RETRY_LIMITS, deadlineMs,
+        policyRevision: policy.revision, cleanup: policy.cleanup, enabled: policy.enabled});
       progressTimer = setInterval(() => requestLog('request-progress', {
         phase, retries, maxRetries: MAX_RETRIES,
         elapsedMs: Date.now() - startedAt, remainingMs: Math.max(0, deadlineMs - (Date.now() - startedAt))
@@ -351,8 +355,15 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', onStop = () => {}, ge
           res.end(errorBody);
         }
       };
-      const schedule = (kind, response, errorCode = errorLabel(kind), cleanupCode = null) => {
+      const schedule = (kind, response, errorCode = errorLabel(kind), cleanupCode = null, handler) => {
         if (!kind) return false;
+        handler ||= errorCode === 'invalid_encrypted_content' ? 'encryptedContent'
+          : errorCode === 'alb_bad_request' ? 'alb400'
+          : ({resource: 'azureResource', rateLimit: 'rateLimit', transport: 'streamIncomplete', availability: 'unavailable'})[kind];
+        if (!policy.handlers[handler]) {
+          requestLog('recovery-disabled', {handler, errorCode});
+          return false;
+        }
         const kindRetries = retriesByKind[kind], maxKindRetries = RETRY_LIMITS[kind];
         const limitReached = retries >= MAX_RETRIES || kindRetries >= maxKindRetries;
         const delayMs = limitReached ? 0 : retryDelay(kind, kindRetries, response.headers);
@@ -442,7 +453,8 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', onStop = () => {}, ge
           settled = true;
           discard();
           requestLog('transport-error', {code: error.code || error.message || 'stream_closed', errorCode: 'stream_incomplete', retryable: isResponses});
-          if (isResponses && schedule('transport', {headers: {}})) return;
+          const handler = error.message === 'stream_closed_before_completed' ? 'streamIncomplete' : 'transport';
+          if (isResponses && schedule('transport', {headers: {}}, 'stream_incomplete', null, handler)) return;
           finishError({statusCode: 502, headers: {}}, Buffer.from(JSON.stringify({error: {
             code: 'stream_incomplete', message: 'Upstream stream disconnected before completion or timed out.'}})));
         };
@@ -532,7 +544,7 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', onStop = () => {}, ge
                 const event = lines.find(line => line.startsWith('event:'))?.slice(6).trim() || value.type;
                 if (event === 'error' || event === 'response.failed') {
                   const parsedError = {...value, type: event};
-                  const cleanupCode = mode === 'magpie-auto' ? historyErrorCode(parsedError) : null;
+                  const cleanupCode = policy.cleanup === 'conditional' ? historyErrorCode(parsedError) : null;
                   const kind = cleanupCode ? 'resource' : retryErrorClass(parsedError);
                   const detail = value.error || value.response?.error || value;
                   const code = String(detail.code || detail.type || 'other').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80);
@@ -599,7 +611,7 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', onStop = () => {}, ge
             const albBadRequest = response.statusCode === 400 && isAlbBadRequestPage(
               value ? value.error?.code === 'cc_switch_upstream_error' ? value.error.message : '' : decoded);
             const detected = retryErrorClass(value);
-            const cleanupCode = mode === 'magpie-auto' && response.statusCode === 400 ? historyErrorCode(value) : null;
+            const cleanupCode = policy.cleanup === 'conditional' && response.statusCode === 400 ? historyErrorCode(value) : null;
             const kind = cleanupCode ? 'resource' : albBadRequest ? 'transport' : ((detected === 'resource' && response.statusCode === 400)
               || (detected === 'rateLimit' && [400, 429].includes(response.statusCode))
               || (detected === 'availability' && response.statusCode === 503) ? detected : null);
@@ -632,6 +644,7 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', onStop = () => {}, ge
       + Buffer.byteLength(body) + '\r\n\r\n' + body);
   });
   server.requestTimeout = 120000;
+  server.stats = stats;
   return server;
 }
 
