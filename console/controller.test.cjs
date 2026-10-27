@@ -156,6 +156,25 @@ test('manual enabled config starts correctly and close restores without erasing 
   assert.equal(fs.readFileSync(h.configPath, 'utf8'), h.original);
 });
 
+test('failed automatic activation stays diagnosable and allows retry with an available port', async t => {
+  const h = await setup(t), file = path.join(h.runtime, 'MagpieFilter.config.json');
+  await h.controller.close();
+  const occupied = http.createServer();
+  t.after(() => close(occupied));
+  const occupiedPort = Number(new URL(await listen(occupied)).port);
+  const config = JSON.parse(fs.readFileSync(file));
+  config.settings = {...h.settings, port: occupiedPort, policy: {...h.settings.policy, enabled: true}};
+  fs.writeFileSync(file, JSON.stringify(config));
+  const c = require('./controller.cjs').createController({runtime: h.runtime});
+  t.after(() => c.close());
+  await c.start();
+  assert.equal(c.status().state, 'needs-attention');
+  assert.match(c.status().lastError, /EADDRINUSE/);
+  assert.equal(fs.readFileSync(h.configPath, 'utf8'), h.original);
+  await c.update({revision: c.status().revision, settings: {...c.status().settings, port: h.settings.port}});
+  assert.equal(c.status().attached, true);
+});
+
 test('recovery journal restores a crashed attachment before accepting new configuration', async t => {
   const h = await setup(t);
   await h.controller.close();

@@ -105,7 +105,9 @@ function createController({runtime, configStore}) {
     if (connection && ['configPath', 'upstream', 'port'].some(key => connection[key] !== next[key])) {
       throw new Error('Disconnect and restore the current connection before changing endpoints.');
     }
-    if (lastError && !proxy) throw new Error('Resolve recovery first using Disconnect: ' + lastError);
+    if (lastError && !proxy && (connection || fs.existsSync(file('connection.json')))) {
+      throw new Error('Resolve recovery first using Disconnect: ' + lastError);
+    }
     transitioning = true;
     const fresh = next.policy.enabled && !proxy;
     let attachmentAttempted = false;
@@ -179,7 +181,12 @@ function createController({runtime, configStore}) {
     finally { transitioning = false; }
   };
   return {status, update: value => serial(() => apply(value)),
-    start: () => serial(() => settings.policy.enabled ? apply({revision, settings}, true) : status()),
+    start: () => serial(async () => {
+      try { if (settings.policy.enabled) await apply({revision, settings}, true); }
+      catch (error) { lastError = lastError || error.message; }
+      // Recovery/activation failures must leave a reachable console for diagnosis and exit.
+      return status();
+    }),
     updateWeb: ({revision: expected, web, ...extra}) => serial(() => {
       if (closed || Object.keys(extra).length || expected !== revision) throw new Error('Settings revision changed or console is closed.');
       if (connection && (web.port === connection.port || Number(new URL(connection.upstream).port || 80) === web.port)) {

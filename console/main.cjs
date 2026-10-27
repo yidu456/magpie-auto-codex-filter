@@ -10,6 +10,7 @@ const {createController} = require('./controller.cjs');
 const {createManagementServer} = require('./server.cjs');
 const {loadAssets} = require('./assets.cjs');
 const {createConfigStore} = require('./configuration.cjs');
+const {openBrowser} = require('./browser.cjs');
 
 const SERVICE = 'magpie-filter-console-v1';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -35,7 +36,7 @@ function parseArgs(args) {
   }
   return options;
 }
-function readJson(file) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } }
+function readJson(file) { try { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); } catch { return null; } }
 function verifyRunning(record, token) {
   return new Promise(resolve => {
     let url;
@@ -59,12 +60,14 @@ function verifyRunning(record, token) {
     req.setTimeout(1000, () => req.destroy()); req.on('error', () => resolve(false));
   });
 }
-function openBrowser(record, token) {
-  const url = record.origin + '/#token=' + token;
-  const executable = process.platform === 'win32' ? path.join(process.env.WINDIR || 'C:\\Windows', 'explorer.exe')
-    : process.platform === 'darwin' ? 'open' : 'xdg-open';
-  const child = spawn(executable, [url], {detached: true, windowsHide: true, stdio: 'ignore'});
-  child.on('error', error => console.error('Cannot open browser: ' + error.message)); child.unref();
+async function openConsole(record, token, configFile) {
+  try { await openBrowser(record.origin + '/#token=' + token); }
+  catch {
+    const message = 'Cannot open the default browser. The console is still running.\n\nOpen: ' + record.origin
+      + '/\n\nRead web.token from:\n' + configFile;
+    console.error(message);
+    showMessage(message);
+  }
 }
 
 async function main(args = process.argv.slice(2)) {
@@ -89,9 +92,9 @@ async function main(args = process.argv.slice(2)) {
       if (error.code !== 'EEXIST') throw error;
       for (let wait = 0; wait < 40; wait++) {
         const owner = readJson(ownerFile), record = readJson(stateFile);
-        const token = readJson(options.configFile)?.web?.token;
+        const token = record?.token || readJson(options.configFile)?.web?.token;
         if (owner && record?.instance === owner.instance && record.pid === owner.pid && await verifyRunning(record, token)) {
-          if (options.open) openBrowser(record, token);
+          if (options.open) await openConsole(record, token, options.configFile);
           console.log('Console already running at ' + record.origin);
           return {reused: true, origin: record.origin};
         }
@@ -136,10 +139,11 @@ async function main(args = process.argv.slice(2)) {
     // Bind the configured management port before any recovery or client configuration changes.
     controller = createController({runtime, configStore: store});
     await controller.start();
-    const record = {service: SERVICE, pid: process.pid, instance, origin: 'http://127.0.0.1:' + port};
+    // Cache the active credential only for relaunch while configured rotation awaits restart.
+    const record = {service: SERVICE, pid: process.pid, instance, origin: 'http://127.0.0.1:' + port, token};
     atomicWrite(stateFile, JSON.stringify(record));
     process.on('SIGINT', signal); process.on('SIGTERM', signal);
-    if (options.open) openBrowser(record, token);
+    if (options.open) await openConsole(record, token, options.configFile);
     console.log('Console ready at ' + record.origin + ' (core ' + (controller.status().settings.policy.enabled ? 'ON' : 'OFF') + ')');
     return {reused: false, origin: record.origin};
   } catch (error) {
@@ -149,14 +153,17 @@ async function main(args = process.argv.slice(2)) {
   }
 }
 
-function reportError(error) {
-  console.error('Magpie Filter: ' + error.message);
+function showMessage(text) {
   if (process.platform === 'win32' && sea.isSea() && !process.argv.includes('--no-open')) {
-    const message = ('Magpie Filter could not start.\n\n' + error.message).replaceAll("'", "''");
+    const message = text.replaceAll("'", "''");
     const script = "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('" + message + "','Magpie Filter') | Out-Null";
     const exe = path.join(process.env.WINDIR || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
     spawn(exe, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {windowsHide: true, stdio: 'ignore'}).on('error', () => {});
   }
+}
+function reportError(error) {
+  console.error('Magpie Filter: ' + error.message);
+  showMessage('Magpie Filter could not start.\n\n' + error.message);
   process.exitCode = 1;
 }
 if (require.main === module) main().catch(reportError);

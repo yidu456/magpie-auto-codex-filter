@@ -4,10 +4,10 @@
 Build the approved local console and EXE on dev, with a verified commit per step.
 
 ## Next Step
-Phase 8: portable unified configuration, fixed port and file-driven startup.
+Phase 9: finish manual authentication, web settings, packaged/browser acceptance.
 
 ## Current Phase
-Phase 8
+Phase 9
 
 ## Phases
 
@@ -39,10 +39,12 @@ Phase 8
 - Detailed task checklists: docs/superpowers/plans/2026-10-27-web-console.md.
 
 ### Phase 8: Portable configuration and startup
-**Status:** in_progress
+**Status:** complete
 - Single EXE-adjacent config; web port/token/settings source of truth; atomic saves and external-edit conflict detection.
 - First launch OFF; subsequent startup respects saved enabled state. Exit restores endpoints without changing startup preference.
 
 ### Phase 9: Manual authentication and packaged acceptance
-**Status:** pending
+**Status:** in_progress
 - Token login at fixed URL, editable web settings, packaged tests and documentation.
+- Preserve active-token relaunch during pending rotation; surface recovery failures in the console.
+- Verify ShellExecute browser dispatch, fixed-port startup and non-default filter port using isolated fixtures.

@@ -57,7 +57,7 @@ test('launcher is single-instance, inert by default and exits through authentica
   assert.equal(state.settings.policy.enabled, false);
   const config = JSON.parse(fs.readFileSync(path.join(runtime, 'MagpieFilter.config.json')));
   assert.equal(record.origin, 'http://127.0.0.1:' + config.web.port);
-  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(path.join(runtime, 'service.json'))), 'token'), false);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(runtime, 'service.json'))).token, config.web.token);
   const second = start(runtime); children.push(second);
   await waitFor(() => second.exitCode !== null);
   assert.equal(second.exitCode, 0, second.output);
@@ -156,4 +156,42 @@ test('fresh launch follows edited token, web port and enabled policy without res
   await quit(record); await waitFor(() => child.exitCode !== null);
   assert.equal(JSON.parse(fs.readFileSync(configFile)).settings.policy.enabled, true);
   assert.equal(fs.readFileSync(configPath, 'utf8'), original); record = null;
+});
+
+test('BOM config and pending token rotation do not prevent reopening the live instance', async t => {
+  const runtime = await portableFixture(t), file = path.join(runtime, 'MagpieFilter.config.json');
+  fs.writeFileSync(file, '\uFEFF' + fs.readFileSync(file, 'utf8'));
+  const children = []; let record;
+  t.after(async () => { if (record) await quit(record).catch(() => {}); for (const c of children) if (c.exitCode === null) c.kill(); });
+  const first = start(runtime); children.push(first);
+  record = await waitFor(() => { try {return JSON.parse(fs.readFileSync(path.join(runtime, 'service.json')));} catch {return null;} });
+  const second = start(runtime); children.push(second); await waitFor(() => second.exitCode !== null);
+  assert.equal(second.exitCode, 0, second.output);
+  const headers = {'x-console-token': record.token, 'content-type': 'application/json'};
+  const config = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+  assert.equal((await call(record.origin, '/api/web', {headers, body: JSON.stringify({revision: config.revision,
+    web: {port: config.web.port, token: 'de'.repeat(32)}})})).status, 200);
+  const third = start(runtime); children.push(third); await waitFor(() => third.exitCode !== null);
+  assert.equal(third.exitCode, 0, third.output);
+  await quit(record); await waitFor(() => first.exitCode !== null); record = null;
+});
+
+test('startup recovery failures still publish an authenticated management console', async t => {
+  let child, record, configPath, config;
+  t.after(async () => {
+    if (configPath) fs.writeFileSync(configPath, '[model_providers.mock]\nbase_url="' + config.settings.upstream + '/v1"\n');
+    if (record) await quit(record).catch(() => {});
+    if (child?.exitCode === null) await waitFor(() => child.exitCode !== null).catch(() => child.kill('SIGKILL'));
+  });
+  const runtime = await portableFixture(t), file = path.join(runtime, 'MagpieFilter.config.json');
+  config = JSON.parse(fs.readFileSync(file));
+  configPath = path.join(runtime, 'mock.toml');
+  fs.writeFileSync(configPath, '[model_providers.mock]\nbase_url="http://127.0.0.1:18184/magpie/v1"\n');
+  config.settings.configPath = configPath; config.settings.policy.enabled = true;
+  fs.writeFileSync(file, JSON.stringify(config));
+  fs.writeFileSync(path.join(runtime, 'connection.json'), JSON.stringify({version: 1, configPath, port: 18184, upstream: config.settings.upstream}));
+  child = start(runtime);
+  record = await waitFor(() => readRecord(runtime));
+  const state = JSON.parse((await call(record.origin, '/api/state', {method: 'GET', headers: {'x-console-token': config.web.token}})).body);
+  assert.equal(state.state, 'needs-attention'); assert.match(state.lastError, /backup|recovery/i);
 });
