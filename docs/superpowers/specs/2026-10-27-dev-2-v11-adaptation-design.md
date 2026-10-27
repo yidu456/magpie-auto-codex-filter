@@ -2,7 +2,7 @@
 
 ## Status and Goal
 
-The user approved selectively adapting the compared V11 capabilities and explicitly requested the literal branch `dev-2`. This document defines compatibility decisions for review before implementation. Baseline: standalone `2649f98`, upstream reference `837f793`; all 123 baseline tests pass.
+The user approved this compatibility design and explicitly requested the literal branch `dev-2`. Baseline: standalone `2649f98`, upstream reference `837f793`; all 123 baseline tests pass. On 2026-10-28 the user also required theme-matched charts and separate pages for request records and usage instructions.
 
 Adapt upstream recovery, protected streaming, and observability to the existing Magpie console. Do not replace the standalone implementation with the CC Switch implementation.
 
@@ -71,7 +71,7 @@ Console additions:
 - Up to 180 event-bearing minute buckets, 200 recent request records, and active-request stages.
 - History retained/removed and actual cleanup-request counts, distinct from retry executions.
 
-Keep existing controls and event table. Use small dependency-free SVG charts and accessible text/table summaries within the current visual language. Verify 390px mobile and desktop layouts, keyboard access, and dynamic text escaping.
+Keep existing controls and event table. Use small dependency-free SVG charts and accessible text/table summaries within the current light blue/teal theme, typography, spacing and card treatments. Split the interface into three navigable pages: control dashboard, request records, and usage instructions. The dashboard contains settings and aggregate charts; the records page contains active/recent requests and diagnostic events; the instructions page contains detailed usage and recovery guidance. They must not all appear on the same page. Use local query-based navigation (`/?page=records`, `/?page=help`) and the same shell/assets; keep login fragments separate. Direct navigation, refresh, back/forward, current-page indication and mobile navigation must work. Verify 390px mobile and desktop layouts, keyboard access, and dynamic text escaping.
 
 Persist same-local-day aggregates atomically to the console runtime's `metrics.json` once per minute and on orderly close. Curves/recent details remain memory-only. Preserve in-flight requests across midnight; attribute events to the day they occur. Validate persisted data; invalid/oversized snapshots must not block proxy startup. Surface persistence problems as a nonfatal diagnostics warning. Do not change config revision when metrics change.
 

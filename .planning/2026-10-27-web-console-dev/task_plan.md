@@ -4,10 +4,10 @@
 Preserve the completed dev console and adapt selected V11 capabilities on dev-2, with a verified commit per step.
 
 ## Next Step
-Review the dev-2 adaptation design, then implement the approved compatibility contract in independently tested steps.
+Execute Task 1 of the approved dev-2 adaptation plan, then continue through streaming, metrics, separate themed pages and packaged acceptance.
 
 ## Current Phase
-Phase 11
+Phase 12
 
 ## Phases
 
@@ -56,8 +56,14 @@ Phase 11
 - Report additions, overlaps, and integration boundaries; no merge or live service changes.
 
 ### Phase 11: dev-2 adaptation design
-**Status:** in_progress
+**Status:** complete
 - User approved selective V11 adaptation and explicitly requested literal dev-2.
 - Created dev-2 from dev 2649f98 in the supplied checkout; dev remains unchanged.
 - Full baseline suite passes 123/123. Compatibility design written for review before implementation.
 - Spec: docs/superpowers/specs/2026-10-27-dev-2-v11-adaptation-design.md.
+
+### Phase 12: dev-2 implementation and acceptance
+**Status:** in_progress
+- User approved design and requested theme-matched charts plus separate request-record/help pages.
+- Plan: docs/superpowers/plans/2026-10-28-dev-2-v11-adaptation.md.
+- Sequential task implementation with isolated review; preserve running instances and original dev.
