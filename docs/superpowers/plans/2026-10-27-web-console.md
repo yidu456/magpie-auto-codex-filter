@@ -89,7 +89,7 @@ assert.deepEqual(receivedBytes, sentCompressedBytes); // core OFF
 
 **Interfaces:** `createController({runtime})` -> `{status(), update({revision,settings}), disconnect(), close()}`. `status` returns `{settings,revision,attached,state,stats,events}` without auth/body data. Settings include `{client:'codex',configPath,upstream,port,policy}`; activation is in `policy.enabled`. `createManagementServer({controller,token,assets,onExit})` returns an unbound HTTP server. API `GET /api/state`, `POST /api/settings`, `POST /api/disconnect`, `POST /api/exit`; header `x-console-token`.
 
-- [ ] Test new controller is inert, first enable attaches only fixture addresses, disable preserves attachment and bypasses, disconnect restores exact addresses, failures preserve ownership, restart recovery, endpoint changes while attached rejected, stale revision rejected.
+- [x] Test new controller is inert, first enable attaches only fixture addresses, disable preserves attachment and bypasses, disconnect restores exact addresses, failures preserve ownership, restart recovery, endpoint changes while attached rejected, stale revision rejected.
 
 ```js
 assert.equal(fs.readFileSync(config, 'utf8'), original); // before enable
@@ -98,9 +98,9 @@ await controller.disconnect();
 assert.equal(fs.readFileSync(config, 'utf8'), original);
 ```
 
-- [ ] Test management auth/Origin/Host/cross-site/body limit/unknown paths and keys; API never returns its token or request payload.
-- [ ] Run failing tests; implement controller using stable `mode='magpie-auto'`, ConfigRouter, journal-before-attach, atomic settings, serialized API mutations and bounded events.
-- [ ] Run all tests and review recovery/error paths; commit `feat: add secure local console service and configuration recovery`.
+- [x] Test management auth/Origin/Host/cross-site/body limit/unknown paths and keys; API never returns its token or request payload.
+- [x] Run failing tests; implement controller using stable `mode='magpie-auto'`, ConfigRouter, journal-before-attach, atomic settings, serialized API mutations and bounded events.
+- [x] Run all tests and review recovery/error paths; commit `feat: add secure local console service and configuration recovery`.
 
 ## Task 4: Chinese browser control surface
 

@@ -54,4 +54,4 @@ class ConfigRouter extends BaseRouter {
   }
   entry(text, key) { return magpieEntries(text).find(item => item.key === key); }
 }
-module.exports = {ConfigRouter};
+module.exports = {ConfigRouter, magpieEntries};

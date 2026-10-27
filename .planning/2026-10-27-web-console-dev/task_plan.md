@@ -4,10 +4,10 @@
 Build the approved local console and EXE on dev, with a verified commit per step.
 
 ## Next Step
-Task 3: controller and management API (test first).
+Task 4: Chinese browser UI and visual verification.
 
 ## Current Phase
-Phase 4
+Phase 5
 
 ## Phases
 
@@ -22,10 +22,10 @@ Phase 4
 **Status:** complete
 
 ### Phase 4: Controller and API
-**Status:** in_progress
+**Status:** complete
 
 ### Phase 5: Browser UI
-**Status:** pending
+**Status:** in_progress
 
 ### Phase 6: Launcher and EXE
 **Status:** pending
