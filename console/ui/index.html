@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Magpie Filter · 本地控制台</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <aside class="rail">
+    <a class="brand" href="#console"><span class="mark" aria-hidden="true">M<span>f</span></span><span>Magpie Filter<small>本地过滤控制台</small></span></a>
+    <nav aria-label="主导航"><a href="#console" class="current">控制台</a><a href="#requests">请求记录</a><a href="#notes">使用说明</a></nav>
+    <div class="rail-bottom"><span class="local-dot"></span> 仅在本机运行<small>Codex / Magpie<br>Dev 预览版</small></div>
+  </aside>
+  <main id="console">
+    <header class="page-header"><div><p class="breadcrumb">工作空间 / 过滤器</p><h1>过滤控制台</h1><p>保留有效的保护，把选择权留给你。</p></div><span class="badge" id="connection-state">正在连接控制台</span></header>
+    <div id="notice" class="notice" role="status" aria-live="polite">正在读取本地设置…</div>
+    <section class="master" aria-labelledby="master-title">
+      <div class="master-copy"><div class="master-heading"><span id="core-lamp" class="lamp"></span><h2 id="master-title">核心过滤</h2><span id="core-state">关闭</span></div><p id="core-description">关闭时不清理、不重试、不暂存；已接入的请求直通 Magpie。</p></div>
+      <label class="switch"><input id="enabled" type="checkbox" role="switch" aria-label="核心过滤总开关" disabled><span class="switch-track" aria-hidden="true"></span></label>
+    </section>
+    <section class="panel connection" aria-labelledby="connection-title">
+      <div class="section-heading"><div><h2 id="connection-title">客户端接入</h2><p>先保存接入设置，再开启总开关。这里只管理过滤器，不管理模型账号。</p></div><span class="tag">Codex → Filter → Magpie</span></div>
+      <form id="connection-form">
+        <div class="connection-fields">
+          <label>客户端<select id="client" name="client"><option value="codex">Codex</option></select></label>
+          <label>Magpie 地址<input id="upstream" name="upstream" type="url" required spellcheck="false" placeholder="http://127.0.0.1:3425"></label>
+          <label>过滤端口<input id="port" name="port" type="number" min="1024" max="65535" required></label>
+          <label class="config-field">Codex 配置文件<input id="config-path" name="configPath" required spellcheck="false" placeholder="C:\Users\…\.codex\config.toml"></label>
+        </div>
+        <div class="form-footer"><span id="connection-hint">接入后更改地址或路径，需先断开并恢复配置。</span><div class="actions"><button id="disconnect" type="button" class="secondary" disabled>断开并恢复</button><button id="save-connection" type="submit" disabled>保存接入设置</button></div></div>
+      </form>
+    </section>
+    <section class="panel" aria-labelledby="policy-title">
+      <div class="section-heading"><div><h2 id="policy-title">历史清理策略</h2><p>选择后即时应用于新请求；正在执行或重试的请求保持原策略。</p></div><span class="tag" id="revision">版本 0</span></div>
+      <fieldset class="modes" id="modes"><legend class="sr-only">清理模式</legend>
+        <label class="mode"><input type="radio" name="cleanup" value="always"><span><strong>暴力清理</strong><small>每次先清理历史推理与可移除 ID</small></span><span class="mode-note">可能损失连续性</span></label>
+        <label class="mode"><input type="radio" name="cleanup" value="conditional" checked><span><strong>条件清理 <b>推荐</b></strong><small>先保留，仅在明确目标错误后清理</small></span><span class="mode-note">兼顾历史与恢复</span></label>
+        <label class="mode"><input type="radio" name="cleanup" value="never"><span><strong>不清理</strong><small>始终保留历史，仍启用勾选的保护</small></span><span class="mode-note">不等于关闭核心</span></label>
+      </fieldset>
+    </section>
+    <section class="panel" aria-labelledby="handlers-title">
+      <div class="section-heading"><div><h2 id="handlers-title">异常处理</h2><p>每项独立开关。未勾选时直接返回错误，不再为该类错误清理或重试。</p></div><span class="tag">共享重试预算</span></div>
+      <div class="handler-grid">
+        <label class="check-row"><input type="checkbox" data-handler="azureResource" checked><span><strong>Azure 资源归属错误</strong><small>精确识别跨资源历史项；条件模式下清理后重试。</small></span><em>最多 5 次</em></label>
+        <label class="check-row"><input type="checkbox" data-handler="encryptedContent" checked><span><strong>无效推理密文</strong><small>仅条件模式处理 invalid_encrypted_content。</small></span><em>共享资源额度</em></label>
+        <label class="check-row"><input type="checkbox" data-handler="rateLimit" checked><span><strong>临时限流</strong><small>按服务端等待要求退避；不包含余额和配额耗尽。</small></span><em>最多 20 次</em></label>
+        <label class="check-row"><input type="checkbox" data-handler="transport" checked><span><strong>网络错误与空闲超时</strong><small>连接失败、网络异常及上游长时间无数据。</small></span><em>最多 10 次</em></label>
+        <label class="check-row"><input type="checkbox" data-handler="streamIncomplete" checked><span><strong>流式中断 / 无详情失败</strong><small>丢弃失败尝试后重试；需要开启整轮暂存。</small></span><em>共享断流额度</em></label>
+        <label class="check-row"><input type="checkbox" data-handler="alb400" checked><span><strong>ALB 网关 HTML 400</strong><small>只匹配已知 ALB 错误页，不扩大到所有 HTTP 400。</small></span><em>共享断流额度</em></label>
+        <label class="check-row"><input type="checkbox" data-handler="unavailable" checked><span><strong>无可用渠道</strong><small>明确报告 no_available_channel 时尝试恢复。</small></span><em>最多 10 次</em></label>
+      </div>
+      <p class="budget">每条请求合计最多额外重试 20 次，总期限 30 分钟。取消请求会终止等待；关闭选项不会放宽这些上限。</p>
+    </section>
+    <section class="panel" aria-labelledby="delivery-title">
+      <div class="section-heading"><div><h2 id="delivery-title">响应交付</h2><p>这是显示速度与中途错误恢复能力之间的取舍，不会改变模型生成速度。</p></div></div>
+      <div class="handler-grid delivery">
+        <label class="check-row"><input id="buffer-response" type="checkbox" checked><span><strong>整轮暂存后交付</strong><small>等本轮成功再交付正文和工具事件，失败尝试不会泄露。</small></span><em>默认开启</em></label>
+        <label class="check-row"><input id="heartbeat" type="checkbox" checked><span><strong>等待期间发送保活</strong><small>发送空的进度事件，避免客户端误以为连接停止。</small></span><em>依赖整轮暂存</em></label>
+      </div>
+      <p id="stream-warning" class="warning" hidden>当前直接流式交付：开始转发后不再重试，也无法撤回已交付的工具事件。流中密文错误、资源错误和中断处理均不生效。</p>
+    </section>
+    <section class="panel" id="requests" aria-labelledby="requests-title">
+      <div class="section-heading"><div><h2 id="requests-title">请求记录</h2><p>只记录事件与计数，不展示密钥、提示词或模型正文。</p></div><span id="request-count" class="tag">0 条请求</span></div>
+      <div class="metrics"><div><span>正在处理</span><strong id="active-count">0</strong></div><div><span>移除推理项</span><strong id="reasoning-count">0</strong></div><div><span>额外重试</span><strong id="retry-count">0</strong></div><div><span>当前策略版本</span><strong id="policy-version">0</strong></div></div>
+      <p id="inflight" class="budget">没有进行中的请求。</p>
+      <div class="event-table"><table><thead><tr><th>时间</th><th>请求</th><th>事件</th><th>详情</th></tr></thead><tbody id="events"><tr><td colspan="4" class="empty">尚无记录。开启接入后，这里会显示经过过滤器的请求。</td></tr></tbody></table></div>
+    </section>
+    <section id="notes" class="notes"><h2>使用前了解</h2><p>首次接入或恢复地址后，Codex 可能需要重开才能读取配置。关闭这个网页不会停止服务，再次双击 EXE 可重新打开。不要与旧版过滤器同时接管同一份配置。</p><p>消息正文、工具结果、call_id、认证保护和请求大小限制不会因为选项切换被删除或关闭。WebSocket 暂不支持。</p><div class="form-footer"><span>退出会恢复本程序改写的地址；有进行中的请求时需先等待结束。</span><button id="exit" type="button" class="danger">退出程序并恢复配置</button></div></section>
+    <footer>Magpie Filter <span>本地控制 · 无远程资源 · 不接触账号密钥</span></footer>
+  </main>
+</body>
+</html>

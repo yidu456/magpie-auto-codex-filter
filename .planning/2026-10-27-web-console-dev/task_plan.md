@@ -4,10 +4,10 @@
 Build the approved local console and EXE on dev, with a verified commit per step.
 
 ## Next Step
-Task 4: Chinese browser UI and visual verification.
+Task 5: launcher and Windows EXE.
 
 ## Current Phase
-Phase 5
+Phase 6
 
 ## Phases
 
@@ -25,10 +25,10 @@ Phase 5
 **Status:** complete
 
 ### Phase 5: Browser UI
-**Status:** in_progress
+**Status:** complete
 
 ### Phase 6: Launcher and EXE
-**Status:** pending
+**Status:** in_progress
 
 ### Phase 7: Validation and handoff
 **Status:** pending

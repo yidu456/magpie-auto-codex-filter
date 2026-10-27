@@ -108,7 +108,7 @@ assert.equal(fs.readFileSync(config, 'utf8'), original);
 
 **Interfaces:** UI uses only documented API, sessionStorage token from fragment, full settings + expected revision per save. Every switch displays saved/effective state and disabled dependencies; dirty forms are not overwritten by status polling.
 
-- [ ] Add server asset delivery/security tests and browser assertions for labeled core switch, mode radios, nine checkboxes, error feedback and saved setting round-trip.
+- [x] Add server asset delivery/security tests and browser assertions for labeled core switch, mode radios, nine checkboxes, error feedback and saved setting round-trip.
 
 ```js
 // Browser: uncheck rate limit, save, reload, assert unchecked and persisted API value.
@@ -116,8 +116,8 @@ assert.equal(fs.readFileSync(config, 'utf8'), original);
 // Browser: at 390px width assert document.scrollWidth <= innerWidth.
 ```
 
-- [ ] Implement compact responsive UI using spec tokens, no CDN or UI dependencies, safe textContent rendering.
-- [ ] Verify keyboard interaction and desktop/mobile screenshot; run test suite; commit `feat: add responsive Chinese filter control panel`.
+- [x] Implement compact responsive UI using spec tokens, no CDN or UI dependencies, safe textContent rendering.
+- [x] Verify keyboard interaction and desktop/mobile screenshot; run test suite; commit `feat: add responsive Chinese filter control panel`.
 
 ## Task 5: Launcher and single Windows EXE
 
