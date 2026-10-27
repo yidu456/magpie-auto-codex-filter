@@ -1,13 +1,13 @@
 # Task Plan: Magpie Web Console Dev
 
 ## Goal
-Build the approved local console and EXE on dev, with a verified commit per step.
+Preserve the completed dev console and adapt selected V11 capabilities on dev-2, with a verified commit per step.
 
 ## Next Step
-Development and isolated acceptance complete. Preserve dev and the user-started portable instance; real-client acceptance remains user-controlled.
+Review the dev-2 adaptation design, then implement the approved compatibility contract in independently tested steps.
 
 ## Current Phase
-Phase 9
+Phase 11
 
 ## Phases
 
@@ -34,7 +34,7 @@ Phase 9
 **Status:** complete
 
 ## Decisions
-- Work in supplied checkout on literal dev branch; no extra worktree or push.
+- Work in supplied checkout; dev was used through Phase 10, then user explicitly selected literal dev-2. No extra worktree or push.
 - Sequential implementation, local mock tests only, preserve legacy runtime.
 - Detailed task checklists: docs/superpowers/plans/2026-10-27-web-console.md.
 
@@ -48,3 +48,16 @@ Phase 9
 - Token login at fixed URL, editable web settings, packaged tests and documentation.
 - Preserve active-token relaunch during pending rotation; surface recovery failures in the console.
 - Verify ShellExecute browser dispatch, fixed-port startup and non-default filter port using isolated fixtures.
+
+### Phase 10: Upstream V11 comparison
+**Status:** complete
+- Inspect local upstream HEAD 837f793 versus V10 and standalone dev HEAD 2649f98.
+- Cross-check streaming, history, retry, metrics, and UI behavior in source and tests.
+- Report additions, overlaps, and integration boundaries; no merge or live service changes.
+
+### Phase 11: dev-2 adaptation design
+**Status:** in_progress
+- User approved selective V11 adaptation and explicitly requested literal dev-2.
+- Created dev-2 from dev 2649f98 in the supplied checkout; dev remains unchanged.
+- Full baseline suite passes 123/123. Compatibility design written for review before implementation.
+- Spec: docs/superpowers/specs/2026-10-27-dev-2-v11-adaptation-design.md.
