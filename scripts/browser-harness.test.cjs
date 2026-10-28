@@ -7,9 +7,9 @@ const vm = require('node:vm');
 const http = require('node:http');
 const {listen, close, call} = require('../magpie-auto-codex-filter/test-support.cjs');
 
-async function runHarness({startupTimeout = false, browserCloseFails = false, exitFails = false, browserCloseHangs = false, apiHangs = false} = {}) {
+async function runHarness({startupTimeout = false, browserCloseFails = false, exitFails = false, browserCloseHangs = false, apiHangs = false, executable} = {}) {
   const primary = new Error(startupTimeout ? 'UI fixture startup timeout' : 'original browser failure');
-  let terminated = false, browserClosed = false, apiCalls = 0;
+  let terminated = false, browserClosed = false, apiCalls = 0, fixtureOptions;
   const owned = {origin: 'http://127.0.0.1:1234', runtime: '/ui-fixture-test',
     ready: startupTimeout ? new Promise(() => {}) : Promise.resolve(), ended: Promise.resolve(),
     close: async () => { terminated = true; }};
@@ -19,7 +19,7 @@ async function runHarness({startupTimeout = false, browserCloseFails = false, ex
   })};
   const module = {exports: {}};
   const imports = name => {
-    if (name === './serve-ui-fixture.cjs') return {createUIFixture: async () => owned};
+    if (name === './serve-ui-fixture.cjs') return {createUIFixture: async options => { fixtureOptions = options; return owned; }};
     if (name === 'playwright') return {chromium};
     if (name.includes('test-support.cjs')) return {call: async (_, route) => {
       apiCalls++;
@@ -33,9 +33,28 @@ async function runHarness({startupTimeout = false, browserCloseFails = false, ex
     console: {log() {}}, setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 20)), clearTimeout, Buffer};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'run-browser-smoke.cjs'), 'utf8'), context);
   let failure;
-  try { await module.exports.main(); } catch (error) { failure = error; }
-  return {failure, primary, terminated, browserClosed, apiCalls};
+  try { await module.exports.main({executable}); } catch (error) { failure = error; }
+  return {failure, primary, terminated, browserClosed, apiCalls, fixtureOptions, exports: module.exports};
 }
+
+test('packaged browser runner selects the explicitly supplied EXE and retains owned cleanup', async () => {
+  const executable = path.resolve('.verification/isolated-MagpieFilter.exe');
+  const result = await runHarness({executable});
+  assert.equal(result.fixtureOptions?.executable, executable);
+  assert.equal(result.exports.runBrowserSmoke, result.exports.main);
+  assert.equal(result.failure, result.primary);
+  assert.equal(result.terminated, true);
+});
+
+test('imported fixture ignores the consumers command-line arguments', async () => {
+  const {spawnSync} = require('node:child_process');
+  const code = `process.argv[2] = 'nonexistent-consumer-argument.exe';
+    (async () => { const fixture = await require('./scripts/serve-ui-fixture.cjs').createUIFixture();
+      try { await fixture.ready; } finally { await fixture.close(); }
+    })().catch(error => { console.error(error); process.exitCode = 1; });`;
+  const result = spawnSync(process.execPath, ['-e', code], {cwd: path.resolve(__dirname, '..'), windowsHide: true, timeout: 20000});
+  assert.equal(result.status, 0, result.stderr.toString());
+});
 
 test('startup timeout still terminates owned fixture without masking the timeout', async () => {
   const result = await runHarness({startupTimeout: true});

@@ -9,18 +9,18 @@ async function bounded(work, milliseconds, message) {
   try { return await Promise.race([work, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), milliseconds); })]); }
   finally { clearTimeout(timer); }
 }
-async function main() {
+async function main({executable, screenshots: directory} = {}) {
   const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
   let fixture, browser, ready = false, failure;
   try {
-    fixture = await createUIFixture();
+    fixture = await createUIFixture({executable});
     await bounded(fixture.ready, 15000, 'UI fixture startup timeout'); ready = true;
     browser = await chromium.launch({headless: true, channel: process.env.BROWSER_CHANNEL || 'chrome'});
     const context = await browser.newContext({viewport: {width: 1280, height: 1000}});
     const page = await context.newPage();
     await page.goto(fixture.origin);
     const run = eval('(' + fs.readFileSync(path.join(__dirname, 'browser-smoke.js'), 'utf8') + ')');
-    const screenshots = path.resolve(__dirname, '../.verification/task-4-browser');
+    const screenshots = directory || path.resolve(__dirname, executable ? '../.verification/task-5-browser' : '../.verification/task-4-browser');
     fs.mkdirSync(screenshots, {recursive: true});
     console.log(JSON.stringify(await run(page, {screenshots, only: process.env.UI_SMOKE_CASE}), null, 2));
   } catch (error) { failure = error; }
@@ -39,5 +39,5 @@ async function main() {
   }
   if (failure) throw failure;
 }
-if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });
-module.exports = {main};
+if (require.main === module) main({executable: process.argv[2]}).catch(error => { console.error(error); process.exitCode = 1; });
+module.exports = {main, runBrowserSmoke: main};

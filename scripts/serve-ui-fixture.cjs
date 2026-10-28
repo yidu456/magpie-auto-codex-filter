@@ -6,7 +6,7 @@ const {spawn} = require('node:child_process');
 const {createConfigStore} = require('../console/configuration.cjs');
 const {listen, close} = require('../magpie-auto-codex-filter/test-support.cjs');
 
-async function createUIFixture() {
+async function createUIFixture({executable, open = false} = {}) {
   const root = path.resolve(__dirname, '../.verification'); fs.mkdirSync(root, {recursive: true});
   const runtime = fs.mkdtempSync(path.join(root, 'ui-fixture-'));
   const upstream = http.createServer((req, res) => { req.resume(); req.on('end', () => res.end('{}')); });
@@ -30,10 +30,9 @@ async function createUIFixture() {
     const store = createConfigStore(path.join(runtime, 'MagpieFilter.config.json'));
     store.save({web: {port: webPort, token: 'ab'.repeat(32)}, settings: {...store.current.settings,
       port: filterPort, upstream: origin, configPath}}, 0);
-    const executable = process.argv[2] ? path.resolve(process.argv[2]) : process.execPath;
-    const args = [...(process.argv[2] ? [] : [path.resolve(__dirname, '../console/main.cjs')]), '--runtime', runtime];
-    if (!process.argv.includes('--open')) args.push('--no-open');
-    child = spawn(executable, args, {windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']});
+    const args = [...(executable ? [] : [path.resolve(__dirname, '../console/main.cjs')]), '--runtime', runtime];
+    if (!open) args.push('--no-open');
+    child = spawn(executable ? path.resolve(executable) : process.execPath, args, {windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']});
     ended = new Promise(resolve => { child.once('exit', resolve); child.once('error', resolve); });
     const ready = new Promise((resolve, reject) => {
       let output = '';
@@ -46,7 +45,7 @@ async function createUIFixture() {
 }
 
 async function main() {
-  const fixture = await createUIFixture();
+  const fixture = await createUIFixture({executable: process.argv[2], open: process.argv.includes('--open')});
   fixture.child.stdout.pipe(process.stdout); fixture.child.stderr.pipe(process.stderr);
   console.log(JSON.stringify({origin: fixture.origin, runtime: fixture.runtime, filterPort: fixture.filterPort}));
   const shutdown = () => fixture.close().catch(error => { console.error(error); process.exitCode = 1; });

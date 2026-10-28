@@ -1,15 +1,22 @@
-# Magpie Filter 本地控制台（dev）
+# Magpie Filter 本地控制台（dev-2）
 
-`dev` 分支在原独立版上新增网页控制台，保留原有 CMD/CLI 入口。首版正式支持 **Codex → 本地过滤器 → Magpie**，不包含 Magpie、Codex、账号或模型服务，不支持 Claude Code / WebSocket。
+`dev-2` 在 `dev` 网页控制台基础上新增受保护流式交付、有限用量观测和四页导航，保留原有 CMD/CLI 入口。支持 **Codex → 本地过滤器 → Magpie**，不包含 Magpie、Codex、账号或模型服务，不支持 Claude Code / WebSocket。
 
 ## 网页版快速开始
 
-1. 双击 `dist/MagpieFilter.exe`，默认浏览器自动打开本地控制台。EXE 内含 Node 和网页资源，不需要另装 Node，也没有 Electron/Chromium 外壳。
-2. 确认 Codex 配置文件、Magpie 本机 HTTP 地址和过滤端口，点击“保存接入设置”。本程序不会替你配置账号、模型或启动 Magpie。
+1. 双击本次单独构建的 `dist/dev-2/MagpieFilter.exe`，默认浏览器自动打开本地控制台。EXE 内含 Node 和网页资源，不需要另装 Node，也没有 Electron/Chromium 外壳。
+2. 在“设置”页确认 Codex 配置文件、Magpie 本机 HTTP 地址和过滤端口，点击“保存接入设置”。本程序不会替你配置账号、模型或启动 Magpie。
 3. 选择清理模式及异常处理项，打开“核心过滤”总开关。**仅首次生成配置时默认关闭**；以后每次启动按配置文件的 `settings.policy.enabled` 决定是否自动接入。
 4. 首次接入后，Codex 可能需要重开才能读取新地址。过滤端口默认 **18184**，可改为 1024–65535 范围内可用且不冲突的端口：先“断开并恢复”→修改并保存→重新开启接入→**重启 Codex**。模式和复选框切换不需要重启。
 
-本次接续开发产物单独放在 **`dist/portable/MagpieFilter.exe`**，避免覆盖仍运行的旧 `dist/MagpieFilter.exe`。切换时先等任务结束、正常退出旧控制台并恢复地址，再启动新版；此次没有停止旧实例。
+本次产物只放在 **`dist/dev-2/MagpieFilter.exe`**，不覆盖 `dist/portable/MagpieFilter.exe` 或旧 `dist` 根目录产物。此次没有停止旧实例，也没有改写真实客户端配置。
+
+## 四页导航
+
+- 首页 `/`：每日聚合指标、请求/重试与观测 token 分钟曲线、首个真实交付/总时长分布、模型/错误计数，以及核心总开关；其余控制项不在首页。
+- 设置 `/?page=settings`：接入地址、清理方式、异常处理、三种交付方式、保活、网页端口/令牌、断开恢复及退出。
+- 请求记录 `/?page=records`：进行中/最近请求的阶段、结果、重试、策略版本、观测覆盖、事件和诊断；不是请求正文查看器。
+- 使用说明 `/?page=help`：模式边界、计量限制、默认兼容性和安全恢复说明。四页可直接打开、刷新，并使用浏览器前进/后退；登录后不会在地址中保留令牌片段。
 
 ## 便携配置与固定网页地址
 
@@ -37,7 +44,7 @@
 | 不清理 | 保留历史，仍启用用户勾选的重试与暂存保护；不是关闭核心 |
 | 总开关关闭 | 已接入的请求直接转发 Magpie，不做 JSON 清理、分类重试和 SSE 暂存；网页与代理入口仍运行 |
 
-以下九项在网页中独立显示，默认均开启，依赖条件不满足时会显示为不可用并保留偏好：
+以下七类异常处理默认开启；交付方式和保活单独设置，依赖条件不满足时显示不可用并保留偏好：
 
 | 选项 | 边界 |
 | --- | --- |
@@ -45,11 +52,29 @@
 | 无效推理密文 | 仅条件模式、HTTP 400 或受保护 SSE 的 `invalid_encrypted_content`；共享资源类额度 |
 | 临时限流 | 最多额外 20 次，遵守 Retry-After；认证、余额与配额不足不会重试 |
 | 网络错误与空闲超时 | 连接异常与上游无数据超时；断流类最多额外 10 次 |
-| 流式中断 / 无详情失败 | 未完成就结束、断流、无详情 response.failed；依赖整轮暂存，共享断流类额度 |
+| 流式中断 / 无详情失败 | 未完成就结束、断流、无详情 response.failed；整轮暂存或受保护流式的首个真实输出前可恢复，共享断流类额度 |
 | ALB 网关 HTML 400 | 只识别已知完整 ALB 错误页及原有包装形式；共享断流类额度 |
 | 无可用渠道 | 精确 no_available_channel 等现有匹配；最多额外 10 次 |
-| 整轮暂存后交付 | 保留原有晚期失败恢复保障；取消后直接流式转发，但一旦开始转发就不再重试或清理重发 |
-| 等待期间发送保活 | 在暂存/重试等待中发送空进度事件；依赖整轮暂存 |
+| 等待期间发送保活 | 在整轮暂存或受保护流式的等待/重试阶段发送空进度事件；完全直通不可用；不计作首个真实交付 |
+
+### 三种交付方式与旧配置
+
+| 方式 | 配置布尔值 | 恢复边界 |
+| --- | --- | --- |
+| 整轮暂存后交付（默认） | `bufferResponse=true`、`protectStreamStart=false` | 等 `response.completed` 再交付，保留原晚期失败恢复保障 |
+| 受保护流式 | `bufferResponse=false`、`protectStreamStart=true` | 首个真实输出前暂存并按原规则恢复；首个正文/工具输出到达后立即流式转发，此后失败不清理、不重发 |
+| 完全直通流式 | 两项均 `false` | 无首段恢复保障；一旦开始转发不再重发，切换需要确认 |
+
+两项同时为 `true` 时整轮暂存优先；网页保存写入明确的一组值。旧 `version:1` 配置缺少 `protectStreamStart` 时按 `false` 读取，**仅启动不会重写文件**；旧 `bufferResponse=false` 保持直通，不自动升级为保护模式。首次生成配置仍核心关闭、整轮暂存；后续启动尊重保存的启用偏好。核心关闭始终透明绕过本过滤器的清理、恢复和终端用量解析。
+
+受保护流式减少首个可见输出的等待，不保证晚期恢复。首个真实输出后认证、资源、断流或其他失败都不能自动重放工具/正文。被丢弃的失败尝试仍可能在上游执行工具或计费。
+
+## 用量观测与存储边界
+
+- 只累计本过滤器实际观测并验证通过的 `response.completed.response.usage`：输入、输出、可选总量和 cached input；缺失/格式错误/核心关闭都标记未知或不可用，不假装为零。合法零保留为零，不估算价格、节省比例或账单。
+- 每日按进程本地日期汇总；错误次数是错误出现次数，恢复请求要求实际发出重试并最终成功。planned/executed retry 与计划等待时长分别展示；计划等待不是实际等待。首交付时长包括上传和等待，但排除本地保活；直方图及均值不是估算百分位。
+- 分钟曲线最多 180 个稀疏分钟桶，进行中记录最多 1000 条，最近记录最多 200 条，均只在内存中。`.magpie-filter/metrics.json` 仅保存同日聚合（计数、模型/错误分类及直方图），约每分钟检查点、正常退出最终写入；重启后曲线、最近和进行中记录均为空。跨日/损坏/超限快照会非致命拒绝，不迁移旧详细记录。
+- 检查点可能因崩溃丢失最后一段；异步日志/持久化失败有诊断但不阻断请求或安全恢复。标签和计数有限量截断，不承诺全量审计。指标/日志不保存正文、请求头、密钥或工具参数/结果；模型名、错误码、时间和聚合也属于本地运行信息，不应随源码分享。
 
 关闭某类异常处理后，返回对应 HTTP 错误或终止 SSE，不把它改分类继续重试。所有分类共享每请求最多 **20 次额外重试、30 分钟总期限**；取消会停止等待。本轮开始时拍下策略快照，进行中的请求和退避重试不受后续切换影响。界面显示策略版本及仍使用旧策略的请求数。
 
@@ -69,6 +94,13 @@
 
 本轮仅验证隔离配置与模拟上游，未接管真实 Codex、未调用收费模型。首次客户端配置命中、Magpie 账号可用、真实模型质量与实际资源占用仍需在你方便时用正常任务确认。
 
+## 安全切换与回滚
+
+1. 等真实任务完成，在旧控制台正常“断开并恢复”并退出（CMD 服务用原停止脚本）。不要强杀、删除恢复记录或让两个实例接管同一客户端配置。
+2. 保留回滚对：**旧 EXE + 与它配套的 `MagpieFilter.config.json`**，先离线备份配置，不复制令牌/恢复文件给别人。本地保留旧 portable EXE；此次 SHA-256 为 `06b5151c3239746748c7b70d2538cbe37e6c0418bba3ade2c11729b3d511da5d`。
+3. 在新独立目录放 dev-2 EXE 和两份许可。需要沿用旧配置时，仅在旧程序退出恢复后复制旧 `version:1` 配置到新 EXE 同目录；先离线设 `settings.policy.enabled=false`，检查客户端路径、上游和端口，再启动并在设置页人工启用。不要迁移 `service.json`、锁或未完成的恢复文件；更换目录不能迁移进程。
+4. 回滚时先等新版任务完成、正常恢复并退出，再启动旧 EXE/配套旧配置。若恢复失败，保留新版整个运行目录诊断，先修复恢复，不要启动旧版抢接管。旧 EXE 不一定识别新版新增字段，不能直接拿已保存的新配置替代回滚配置。
+
 ## 构建与验证
 
 Windows x64，Node 24.12+：
@@ -76,26 +108,26 @@ Windows x64，Node 24.12+：
 ```powershell
 npm ci --ignore-scripts
 npm test
-npm run build
-npm run smoke:exe
+node -e "require('./scripts/build.cjs').build({outputDirectory:'dist/dev-2'}).catch(e=>{console.error(e);process.exitCode=1})"
+node scripts/smoke-exe.cjs dist/dev-2/MagpieFilter.exe
 ```
 
-构建依赖仅 `esbuild` 和 `postject`，版本锁定在 lockfile；运行无第三方依赖。构建需联网获取匹配版本的 Node LICENSE。`dist` 包含 EXE、两份许可和 EXE 校验值；EXE 约 86 MiB（磁盘体积，不是内存占用）。运行后生成外部设置/日志/恢复文件是正常行为。
+先确认目标 EXE 不存在或是自己可替换的未运行产物；构建会写指定目录，切勿覆盖旧产物。默认 `npm run build` / `npm run smoke:exe` 仍指向 `dist` 根目录，保留旧版时请使用上述显式命令。构建依赖仅 `esbuild` 和 `postject`，版本锁定在 lockfile；运行无第三方依赖。构建需联网获取匹配版本的 Node LICENSE。`dist/dev-2` 包含 EXE、两份许可和 EXE 校验值；EXE 约 86 MiB（磁盘体积，不是内存占用）。运行后生成外部设置/日志/恢复文件是正常行为。
 
 当前是**未签名 dev EXE**，Windows/SmartScreen 可能提示。GUI 子系统构建不保留命令行窗口。构建时 postject 的原 Node 签名警告不代表产物带有效签名；产物验证为 NotSigned。发布前如需受信任签名，要使用自己的代码签名证书。
 
 `.github/workflows/windows-build.yml` 可手动或推送 dev 后在 Windows runner 构建并上传 artifact，不自动发布 Release。此次仅完成本机构建，未推送、未运行远程工作流。
 
-根 `SHA256SUMS.txt` 校验可分发源码；`dist/SHA256SUMS.txt` 单独校验 EXE。不要分享 `.runtime`、`.verification`、`.planning`、`.playwright-mcp` 或 `%LOCALAPPDATA%` 中的运行状态。
+根 `SHA256SUMS.txt` 校验可分发源码；`dist/dev-2/SHA256SUMS.txt` 单独校验 EXE。源码校验覆盖源码/测试/脚本/许可，不包括本地规划和运行状态；`node --test scripts/source-manifest.test.cjs` 验证覆盖和当前文件字节。不要分享 `.runtime`、`.verification`、`.planning`、`.superpowers`、`.playwright-mcp` 或 `%LOCALAPPDATA%` 中的运行状态。
 
-保留运行中的旧产物时，可单独构建并验收：
+可选的四页浏览器验收（已有 Playwright 与 Chrome，不安装/下载浏览器）：
 
 ```powershell
-node -e "require('./scripts/build.cjs').build({outputDirectory:'dist/portable'}).catch(e=>{console.error(e);process.exitCode=1})"
-node scripts/smoke-exe.cjs dist/portable/MagpieFilter.exe
+$env:PLAYWRIGHT_MODULE='你的已安装 playwright 模块绝对路径'
+node scripts/run-browser-smoke.cjs dist/dev-2/MagpieFilter.exe
 ```
 
-浏览器验收工装：`node scripts/serve-ui-fixture.cjs [EXE路径]` 只建立工作区内的模拟配置与上游；用独立 Playwright 页面打开它输出的本地地址后执行 `scripts/browser-smoke.js`。该脚本拒绝修改非工装配置。测试结束在页面点击退出，工装也会结束。不要分享 `MagpieFilter.config.json` 或 `.magpie-filter`。
+不传 EXE 参数则测试源码。Runner 使用已安装 Chrome、独立 headless 上下文和工作区内模拟配置/上游，成功或失败都清理它自己拥有的子进程，不枚举或停止用户进程；可用 `BROWSER_CHANNEL` 选择已有兼容浏览器。桌面与 390px 四页截图在 `.verification/task-5-browser`，不分发。独立 CLI 工装 `node scripts/serve-ui-fixture.cjs [EXE路径]` 仍可用；`scripts/browser-smoke.js` 拒绝修改非工装配置。EXE smoke 覆盖旧配置只读、受保护首输出/前段恢复/晚期不重放、透明绕过/精确地址恢复、重启仅聚合恢复、令牌/端口待重启、单实例、复制到其他目录并在无 Node PATH/不同 cwd 下读取相邻配置。所有测试仅本地模拟，不调用收费服务。
 
 ## 原独立版 CMD/CLI 说明
 
