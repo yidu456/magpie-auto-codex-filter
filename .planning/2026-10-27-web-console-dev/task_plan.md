@@ -4,10 +4,10 @@
 Preserve the completed dev console and adapt selected V11 capabilities on dev-2, with a verified commit per step.
 
 ## Next Step
-Completed reviewed dev-2 adaptation and packaged acceptance. Await approval of proposed cross-platform Release/port-conflict termination design before implementing the added scope; no remote publishing or real-process termination performed.
+Execute approved Phase13 plan: safe port-owner adapter, explicit controller/UI consent, native packages, gated GitHub release workflow, final acceptance. No remote publishing or real-user process termination.
 
 ## Current Phase
-Phase 13 (design approval pending)
+Phase 13
 
 ## Phases
 
@@ -70,7 +70,7 @@ Phase 13 (design approval pending)
 - Four pages implemented; final branch review and singleton size correction approved, rebuilt EXE verified. Full327/327 plus isolated source/packaged browser and standalone lifecycle acceptance.
 
 ### Phase 13: Cross-platform release and confirmed port takeover
-**Status:** pending
+**Status:** in_progress
 - User requested GitHub Actions automatic Release packages for Windows, macOS and Linux, plus explicit yes/no termination of identified filter-port owner before enabling.
 - Proposed Windowsx64/macOSarm64+x64/Linuxx64, embedded runtime, v* tag releases; identity revalidation, no silent privilege escalation/critical-process termination/recovery bypass.
-- Await combined design approval. Implementation, native macOS/Linux CI execution and remote release have not occurred.
+- User approved with continue on2026-10-28. Plan: docs/superpowers/plans/2026-10-28-port-takeover-release.md. Native macOS/Linux CI execution and remote release remain unperformed.
