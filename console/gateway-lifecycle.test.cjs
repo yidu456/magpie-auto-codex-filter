@@ -114,6 +114,36 @@ test('forced gateway close covers speculative idle TCP without touching another 
   assert.equal((await call('http://127.0.0.1:' + h.upstream.address().port, '/', {method: 'GET'})).body, 'unrelated upstream');
 });
 
+test('rejected half-open WebSocket upgrade cannot strand disconnect or its mutation queue', {timeout: 5000}, async t => {
+  const net = require('node:net');
+  const h = await setup(t, () => assert.fail('Unsupported upgrade cannot reach upstream'));
+  await h.c.connect({revision: 1});
+  const socket = net.connect({port: Number(new URL(h.origin).port), host: '127.0.0.1', allowHalfOpen: true});
+  socket.on('error', () => {});
+  let response = '', disconnecting, timer;
+  try {
+    await new Promise(resolve => socket.once('connect', resolve));
+    socket.on('data', chunk => { response += chunk.toString(); });
+    socket.write('GET /v1/responses HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n');
+    await waitFor(() => response.includes('WebSocket filtering is not supported.'));
+    assert.match(response, /^HTTP\/1\.1 426 Upgrade Required\r\n/);
+    assert.match(response, /\r\nConnection: close\r\n/);
+    assert.equal(h.c.status().stats.activeRequests, 0);
+    disconnecting = h.c.disconnect();
+    await Promise.race([disconnecting, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Rejected upgrade stranded gateway disconnect')), 1000);
+    })]);
+    assert.equal(h.c.status().connected, false);
+    assert.equal(fs.readFileSync(h.configPath, 'utf8'), h.original);
+    const updated = await h.c.update({revision: h.c.status().revision, settings: h.c.status().settings});
+    assert.equal(updated.transitioning, false);
+    await h.c.connect({revision: updated.revision});
+    assert.equal(h.c.status().connected, true);
+  } finally {
+    clearTimeout(timer); socket.destroy(); await disconnecting;
+  }
+});
+
 test('changing core keeps an admitted request policy until forced gateway cancellation', async t => {
   const h = await setup(t, (req, res) => { req.resume(); });
   const {c} = h;

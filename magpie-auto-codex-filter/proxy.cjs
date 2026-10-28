@@ -828,8 +828,11 @@ function makeProxy({getUpstream, token, mode = 'ccswitch', getPolicy, onStop = (
   });
   server.on('upgrade', (req, socket) => {
     const body = 'Use Responses over HTTP/SSE; WebSocket filtering is not supported.';
+    // Upgraded sockets are excluded from HTTP closeAllConnections; a half-open peer must not strand shutdown.
+    const timer = setTimeout(() => socket.destroy(), 250);
+    socket.once('close', () => clearTimeout(timer));
     socket.end('HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: '
-      + Buffer.byteLength(body) + '\r\n\r\n' + body);
+      + Buffer.byteLength(body) + '\r\n\r\n' + body, () => socket.destroy());
   });
   server.requestTimeout = 120000;
   server.stats = stats;
