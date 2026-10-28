@@ -255,6 +255,8 @@ function createController({runtime, configStore, portOwner = createPortOwner()})
       const next = validateUpdate({revision, settings: confirmed.settings});
       if (!next.policy.enabled || proxy) throw new Error('Connection changed. Retry activation.');
       checkUnowned(next);
+      // Repeat normal activation's address-backup ownership validation before any destructive work.
+      makeRouter(next);
       if (!conflict.canTerminate) throw Object.assign(new Error('Port owner cannot be safely terminated. Quit it manually and retry.'), {code: 'PORT_OWNER_UNSAFE'});
       transitioning = portConflictPending = true;
       try { await portOwner.terminate(next.port, confirmed.owner); }

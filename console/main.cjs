@@ -133,6 +133,7 @@ async function main(args = process.argv.slice(2)) {
     const store = createConfigStore(options.configFile), {token, port} = store.current.web;
     const facade = {status: () => ({...controller.status(), application: {service: SERVICE, pid: process.pid, instance}}),
       update: value => controller.update(value), updateWeb: value => controller.updateWeb(value),
+      resolvePortConflict: value => controller.resolvePortConflict(value),
       disconnect: () => controller.disconnect(), close: () => controller.close()};
     server = createManagementServer({controller: facade, token, assets: loadAssets(), onExit: () => exit().catch(error => console.error(error.message))});
     await new Promise((resolve, reject) => {

@@ -263,3 +263,19 @@ test('management body timeout does not cancel an already dispatched long confirm
   assert.equal(response.status, 200); assert.equal(JSON.parse(response.body).transitioning, false);
   assert.equal(h.kills, 1); assert.equal(h.controller.status().connected, true);
 });
+
+for (const [kind, contents] of [['malformed', '{invalid-json'], ['foreign', JSON.stringify({version: 1,
+  configPath: 'foreign-config.toml', filterOrigin: 'http://127.0.0.1:12345', mode: 'magpie-auto', routes: []})]]) {
+  test(kind + ' address backup introduced during consent blocks termination and preserves bytes', async t => {
+    const h = await setup(t), consent = await h.conflict(), backup = path.join(h.runtime, 'routes.json');
+    fs.writeFileSync(backup, contents);
+    const configBefore = fs.readFileSync(h.controller.status().configFile, 'utf8');
+    await assert.rejects(h.resolve(consent));
+    assert.equal(h.kills, 0, 'Validate the recovery backup before dispatching the destructive adapter');
+    assert.equal(fs.readFileSync(backup, 'utf8'), contents);
+    assert.equal(fs.readFileSync(h.controller.status().configFile, 'utf8'), configBefore);
+    assert.equal(fs.readFileSync(h.configPath, 'utf8'), h.original);
+    assert.equal(h.controller.status().portConflict, null); assert.equal(h.controller.status().connected, false);
+    assert.equal((await call('http://127.0.0.1:' + h.port, '/', {method: 'GET'})).body, 'owned fixture');
+  });
+}

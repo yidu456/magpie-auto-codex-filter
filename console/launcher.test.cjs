@@ -262,3 +262,35 @@ test('startup recovery failures still publish an authenticated management consol
   const state = JSON.parse((await call(record.origin, '/api/state', {method: 'GET', headers: {'x-console-token': config.web.token}})).body);
   assert.equal(state.state, 'needs-attention'); assert.match(state.lastError, /backup|recovery/i);
 });
+
+test('real launcher facade forwards occupied-port cancellation and consumes consent without termination', {timeout: 40000}, async t => {
+  const runtime = await portableFixture(t), filename = path.join(runtime, 'MagpieFilter.config.json');
+  const occupied = http.createServer((req, res) => res.end('owned listener still alive'));
+  const occupiedOrigin = await listen(occupied); t.after(() => close(occupied));
+  const configPath = path.join(runtime, 'occupied-fixture.toml');
+  const original = '[model_providers.magpie]\nbase_url="http://127.0.0.1:3425/v1"\n';
+  fs.writeFileSync(configPath, original);
+  const config = JSON.parse(fs.readFileSync(filename));
+  config.settings = {...config.settings, configPath, port: Number(new URL(occupiedOrigin).port),
+    policy: {...config.settings.policy, enabled: true}};
+  fs.writeFileSync(filename, JSON.stringify(config)); const before = fs.readFileSync(filename, 'utf8');
+  const child = start(runtime); let record;
+  t.after(async () => {
+    if (record) await quit(record).catch(() => {});
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await waitFor(() => child.exitCode !== null || child.signalCode !== null).catch(() => {});
+  });
+  record = await waitFor(() => readRecord(runtime), 30000);
+  const headers = {'x-console-token': record.token, 'content-type': 'application/json'};
+  const state = JSON.parse((await call(record.origin, '/api/state', {method: 'GET', headers})).body);
+  assert.equal(state.application.pid, child.pid); assert.equal(state.connected, false);
+  assert.ok(state.portConflict?.challenge);
+  const body = JSON.stringify({revision: state.revision, challenge: state.portConflict.challenge, confirm: false});
+  const canceled = await call(record.origin, '/api/port-conflict', {headers, body});
+  assert.equal(canceled.status, 200, canceled.body);
+  assert.equal(JSON.parse(canceled.body).portConflict, null);
+  assert.equal((await call(record.origin, '/api/port-conflict', {headers, body})).status, 409);
+  assert.equal(fs.readFileSync(filename, 'utf8'), before); assert.equal(fs.readFileSync(configPath, 'utf8'), original);
+  assert.equal((await call(occupiedOrigin, '/', {method: 'GET'})).body, 'owned listener still alive');
+  assert.equal((await quit(record)).status, 200); await waitFor(() => child.exitCode !== null); record = null;
+});
