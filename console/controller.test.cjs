@@ -246,17 +246,23 @@ test('metrics retain namespaced lifecycles across reconnect, observed tokens and
   revision = c.status().revision; await send();
   const state = c.status(); assert.equal(state.revision, revision);
   assert.equal(state.metrics.totals.success, 2); assert.equal(state.metrics.totals.inputTokens, 24);
+  assert.equal(state.metrics.totals.kept, 2);
   assert.equal(state.metrics.recent.length, 2);
   assert.notEqual(state.metrics.recent[0].requestId, state.metrics.recent[1].requestId);
   assert.equal(state.activePolicies.length, 0);
   await c.close();
   const persisted = fs.readFileSync(path.join(h.runtime, 'metrics.json'), 'utf8');
   assert.doesNotMatch(persisted, /secret-prompt|secret-output|secret-credential/);
+  assert.equal(Object.hasOwn(JSON.parse(persisted), 'series'), false);
+  assert.equal(Object.hasOwn(JSON.parse(persisted), 'recent'), false);
   assert.doesNotMatch(fs.readFileSync(path.join(h.runtime, 'console.log'), 'utf8'), /secret-prompt|secret-output|secret-credential/);
   const loaded = require('./controller.cjs').createController({runtime: h.runtime});
   t.after(() => loaded.close());
   assert.equal(loaded.status().metrics.totals.success, 2);
+  assert.equal(loaded.status().metrics.totals.kept, 2);
   assert.equal(loaded.status().metrics.active.length, 0);
+  assert.deepEqual(loaded.status().metrics.recent, []);
+  assert.deepEqual(loaded.status().metrics.series, []);
 });
 
 test('minute persistence is atomic, independent of revision and stops on normal close', async t => {

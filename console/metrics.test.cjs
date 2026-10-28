@@ -91,6 +91,71 @@ test('retry completion that is later canceled is not recovered success', () => {
   assert.deepEqual(r.snapshot().retry.recoveredByKind, {});
 });
 
+test('planned retry wait sums valid scheduled delays, not actual elapsed wait, and persists safely', () => {
+  const {recorder: r, advance} = setup();
+  r.observe('request-started', {requestId: 1, enabled: true});
+  for (const delayMs of [125.5, 2000, 0, -1, Infinity, NaN, '500', Number.MAX_SAFE_INTEGER + 1])
+    r.observe('retry-scheduled', {requestId: 1, kind: 'transport', delayMs});
+  advance(10);
+  r.observe('request-finished', {requestId: 1, outcome: 'canceled', durationMs: 10});
+  assert.equal(r.snapshot().retry.plannedWaitMs, 2125.5);
+  assert.equal(r.snapshot().retry.scheduled, 8); assert.equal(r.snapshot().retry.dispatched, 0);
+  const saved = r.serialize(), {recorder: loaded} = setup();
+  assert.equal(loaded.hydrate(saved), true); assert.equal(loaded.snapshot().retry.plannedWaitMs, 2125.5);
+  for (const invalid of [-1, Infinity, NaN, '500', Number.MAX_SAFE_INTEGER + 1]) {
+    const bad = structuredClone(saved); bad.retry.plannedWaitMs = invalid;
+    assert.equal(loaded.hydrate(bad), false);
+    assert.equal(loaded.snapshot().retry.plannedWaitMs, 2125.5);
+  }
+  const {recorder: large} = setup(); large.observe('request-started', {requestId: 1, enabled: true});
+  for (let i = 0; i < 2; i++) large.observe('retry-scheduled', {requestId: 1, delayMs: Number.MAX_SAFE_INTEGER});
+  assert.equal(large.snapshot().retry.plannedWaitMs, Number.MAX_SAFE_INTEGER);
+});
+
+test('history kept items count initial handling once, separately from removals and actual cleanups', () => {
+  const {recorder: r} = setup();
+  r.observe('request-started', {requestId: 1, enabled: true});
+  r.observe('filtered', {requestId: 1, kept: 7, removed: 2});
+  r.observe('filtered', {requestId: 1, kept: 99, removed: 99});
+  r.observe('history-cleanup', {requestId: 1, removed: 1});
+  r.observe('history-cleanup', {requestId: 1, removed: 99});
+  finish(r, 2);
+  r.observe('request-started', {requestId: 3, enabled: true});
+  r.observe('history-preserved', {requestId: 3, kept: 5, removed: 0});
+  for (const [id, kept] of [[4, -1], [5, NaN], [6, Infinity], [7, 1.5], [8, '5']]) {
+    r.observe('request-started', {requestId: id, enabled: true});
+    r.observe('history-preserved', {requestId: id, kept});
+  }
+  const s = r.snapshot(); assert.equal(s.totals.kept, 12); assert.equal(s.totals.removed, 3);
+  assert.equal(s.totals.filtered, 1); assert.equal(s.totals.cleanups, 1); assert.equal(s.retry.dispatched, 0);
+  const saved = r.serialize(), {recorder: loaded} = setup();
+  assert.equal(loaded.hydrate(saved), true); assert.equal(loaded.snapshot().totals.kept, 12);
+  for (const invalid of [-1, NaN, Infinity, 1.5, '5']) {
+    const bad = structuredClone(saved); bad.totals.kept = invalid;
+    assert.equal(loaded.hydrate(bad), false); assert.equal(loaded.snapshot().totals.kept, 12);
+  }
+  const {recorder: large} = setup();
+  for (const id of [1, 2]) {
+    large.observe('request-started', {requestId: id, enabled: true});
+    large.observe('filtered', {requestId: id, kept: Number.MAX_SAFE_INTEGER});
+  }
+  assert.equal(large.snapshot().totals.kept, Number.MAX_SAFE_INTEGER);
+});
+
+test('kept items and planned wait reset at midnight while in-flight and live history survive', () => {
+  const {recorder: r, advance} = setup(new Date(2026, 9, 27, 23, 59, 50).getTime());
+  r.observe('request-started', {requestId: 1, enabled: true});
+  r.observe('history-preserved', {requestId: 1, kept: 11, removed: 0});
+  r.observe('retry-scheduled', {requestId: 1, kind: 'transport', delayMs: 250});
+  assert.equal(r.snapshot().totals.kept, 11); assert.equal(r.snapshot().retry.plannedWaitMs, 250);
+  advance(20000);
+  assert.equal(r.snapshot().totals.kept, 0); assert.equal(r.snapshot().retry.plannedWaitMs, 0);
+  assert.equal(r.snapshot().active.length, 1);
+  r.observe('retry-scheduled', {requestId: 1, kind: 'transport', delayMs: 750});
+  r.observe('request-finished', {requestId: 1, outcome: 'canceled', durationMs: 20000});
+  assert.equal(r.snapshot().retry.plannedWaitMs, 750); assert.equal(r.snapshot().recent.length, 1);
+});
+
 test('midnight resets daily counters but keeps active records and rolling series', () => {
   const {recorder: r, advance} = setup(new Date(2026, 9, 27, 23, 59, 50).getTime());
   r.observe('request-started', {requestId: 'old:1', enabled: true});
@@ -124,15 +189,19 @@ test('bounds recent, active, model/error dimensions and persistence while reject
   assert.doesNotMatch(serialized, /secret|bad\\nlabel/);
 });
 
-test('same-day hydration restores only validated bounded metadata, not active requests or stale data', () => {
+test('same-day hydration restores aggregates only and ignores memory-only or unknown saved details', () => {
   const {recorder: r} = setup(); finish(r, 1);
   r.observe('request-started', {requestId: 2, enabled: true});
-  const saved = r.serialize(); saved.body = 'secret-body'; saved.recent[0].tool = 'secret-tool';
+  const saved = r.serialize();
+  assert.equal(Object.hasOwn(saved, 'series'), false); assert.equal(Object.hasOwn(saved, 'recent'), false);
+  assert.equal(r.snapshot().series.length, 1); assert.equal(r.snapshot().recent.length, 1);
+  saved.body = 'secret-body'; saved.recent = [{tool: 'secret-tool'}]; saved.series = {body: 'secret-curve'};
   const {recorder: loaded, advance} = setup();
   assert.equal(loaded.hydrate(saved), true); assert.equal(loaded.snapshot().totals.success, 1);
   assert.equal(loaded.snapshot().active.length, 0); assert.doesNotMatch(JSON.stringify(loaded.snapshot()), /secret/);
+  assert.deepEqual(loaded.snapshot().recent, []); assert.deepEqual(loaded.snapshot().series, []);
   for (const mutate of [s => { s.totals.success = -1; }, s => { s.retry.scheduled = Infinity; },
-    s => { s.series = {}; }, s => { s.latency.duration.counts = [NaN]; }, s => { s.recent[0].usage = {input_tokens: 1}; },
+    s => { s.totals = []; }, s => { s.latency.duration.counts = [NaN]; }, s => { s.retry.recoveredByKind = []; },
     s => { s.errorsByCode = {x: 'secret'}; }]) {
     const bad = structuredClone(saved); mutate(bad);
     assert.equal(loaded.hydrate(bad), false); assert.equal(loaded.snapshot().totals.success, 1);

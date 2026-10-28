@@ -32,13 +32,13 @@ function usage(value) {
 }
 function totals() {
   return {started: 0, finished: 0, success: 0, failed: 0, canceled: 0, unavailable: 0,
-    filtered: 0, historyPreserved: 0, cleanups: 0, removed: 0, removedItemIds: 0,
+    filtered: 0, historyPreserved: 0, cleanups: 0, kept: 0, removed: 0, removedItemIds: 0,
     usageRequests: 0, inputTokens: null, outputTokens: null, totalTokens: null, cachedInputTokens: null};
 }
 const histogram = () => ({boundsMs: [...BOUNDS], counts: Array(BOUNDS.length + 1).fill(0), count: 0, sumMs: 0});
 function daily(date) {
   return {date, totals: totals(), retry: {scheduled: 0, dispatched: 0, recoveredRequests: 0,
-    recoveredByKind: {}, exhausted: 0}, errorsByCode: {}, errorsByKind: {}, byModel: {},
+    recoveredByKind: {}, exhausted: 0, plannedWaitMs: 0}, errorsByCode: {}, errorsByKind: {}, byModel: {},
     latency: {ttfb: histogram(), duration: histogram()}};
 }
 function dimension(target, value, limit) {
@@ -117,6 +117,7 @@ function createRecorder({now = Date.now} = {}) {
       if (!row.usage) row.usageState = 'unavailable';
     } else if ((event === 'filtered' || event === 'history-preserved') && !entry.filtered) {
       entry.filtered = true; add(state.totals, event === 'filtered' ? 'filtered' : 'historyPreserved');
+      if (count(data.kept)) add(state.totals, 'kept', data.kept);
       if (count(data.removed)) add(state.totals, 'removed', data.removed);
       if (count(data.removedItemIds)) add(state.totals, 'removedItemIds', data.removedItemIds);
     } else if (event === 'history-cleanup' && !entry.cleaned) {
@@ -125,6 +126,7 @@ function createRecorder({now = Date.now} = {}) {
       if (count(data.removedItemIds)) add(state.totals, 'removedItemIds', data.removedItemIds);
     } else if (event === 'retry-scheduled') {
       add(state.retry, 'scheduled'); add(row, 'retryScheduled');
+      if (timing(data.delayMs)) add(state.retry, 'plannedWaitMs', data.delayMs);
     } else if (event === 'retry-dispatched') {
       add(state.retry, 'dispatched'); add(row, 'retryDispatched'); add(bucket(time), 'retries');
       const retryKind = kind(data.kind);
@@ -157,7 +159,7 @@ function createRecorder({now = Date.now} = {}) {
       elapsedMs: Math.max(0, time - Date.parse(row.startedAt))})), diagnostics});
   };
   const serialize = () => {
-    refresh(); return structuredClone({version: 1, ...state, series, recent});
+    refresh(); return structuredClone({version: 1, ...state});
   };
   const hydrate = saved => {
     refresh();
@@ -189,6 +191,8 @@ function createRecorder({now = Date.now} = {}) {
       for (const key of ['scheduled', 'dispatched', 'recoveredRequests', 'exhausted']) {
         if (!count(saved.retry[key])) throw new Error('retry'); clean.retry[key] = saved.retry[key];
       }
+      if (!timing(saved.retry.plannedWaitMs)) throw new Error('retry wait');
+      clean.retry.plannedWaitMs = saved.retry.plannedWaitMs;
       clean.retry.recoveredByKind = dictionary(saved.retry.recoveredByKind, 6, key => KINDS.includes(key));
       clean.errorsByCode = dictionary(saved.errorsByCode, 101, key => code(key) === key);
       clean.errorsByKind = dictionary(saved.errorsByKind, 6, key => KINDS.includes(key));
@@ -202,42 +206,7 @@ function createRecorder({now = Date.now} = {}) {
           || !count(hist.count) || !timing(hist.sumMs)) throw new Error('latency');
         clean.latency[key] = {boundsMs: [...BOUNDS], counts: [...hist.counts], count: hist.count, sumMs: hist.sumMs};
       }
-      if (!Array.isArray(saved.series) || saved.series.length > 180 || !Array.isArray(saved.recent)
-        || saved.recent.length > 200) throw new Error('arrays');
-      const cleanSeries = saved.series.map(row => {
-        const result = counters(row, {minute: 0, started: 0, success: 0, failed: 0, canceled: 0, unavailable: 0,
-          retries: 0, inputTokens: null, outputTokens: null}, ['inputTokens', 'outputTokens']);
-        if (result.minute % 60000) throw new Error('minute'); return result;
-      });
-      const cleanRecent = saved.recent.map(row => {
-        if (!object(row) || !idValid(row.requestId) || !OUTCOMES.includes(row.outcome)
-          || !['observed', 'unavailable'].includes(row.usageState)) throw new Error('record');
-        const result = {};
-        for (const key of ['startedAt', 'finishedAt']) {
-          if (typeof row[key] !== 'string' || !Number.isFinite(Date.parse(row[key]))
-            || new Date(row[key]).toISOString() !== row[key]) throw new Error('date');
-          result[key] = row[key];
-        }
-        for (const key of ['enabled', 'streaming', 'observationAvailable']) {
-          if (row[key] !== null && typeof row[key] !== 'boolean') throw new Error('boolean'); result[key] = row[key];
-        }
-        for (const key of ['policyRevision', 'status', 'retryScheduled', 'retryDispatched']) {
-          if (!(row[key] === null && ['policyRevision', 'status'].includes(key)) && !count(row[key])) throw new Error('count');
-          result[key] = row[key];
-        }
-        for (const key of ['ttfbMs', 'durationMs']) {
-          if (row[key] !== null && !timing(row[key])) throw new Error('timing'); result[key] = row[key];
-        }
-        if (row.model !== null && !label(row.model)) throw new Error('model');
-        if (row.errorCode !== null && code(row.errorCode) !== row.errorCode) throw new Error('code');
-        if (row.errorKind !== null && !KINDS.includes(row.errorKind)) throw new Error('kind');
-        if (!Array.isArray(row.retryKinds) || row.retryKinds.length > 6 || !row.retryKinds.every(value => KINDS.includes(value))) throw new Error('kind');
-        const validUsage = row.usage === null ? null : usage(row.usage);
-        if (row.usage !== null && !validUsage || (row.usageState === 'observed') !== (validUsage !== null)) throw new Error('usage');
-        return {...result, requestId: row.requestId, model: row.model, errorCode: row.errorCode, errorKind: row.errorKind,
-          outcome: row.outcome, phase: 'finished', retryKinds: [...new Set(row.retryKinds)], usage: validUsage, usageState: row.usageState};
-      });
-      state = clean; series = cleanSeries; recent = cleanRecent; refresh(); return true;
+      state = clean; refresh(); return true;
     } catch { add(diagnostics, 'corruptSnapshots'); return false; }
   };
   return {observe, snapshot, serialize, hydrate};
