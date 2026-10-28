@@ -4,10 +4,10 @@
 Preserve the completed dev console and adapt selected V11 capabilities on dev-2, with a verified commit per step.
 
 ## Next Step
-Execute Task 1 of the approved dev-2 adaptation plan, then continue through streaming, metrics, separate themed pages and packaged acceptance.
+Completed reviewed dev-2 adaptation and packaged acceptance. Await approval of proposed cross-platform Release/port-conflict termination design before implementing the added scope; no remote publishing or real-process termination performed.
 
 ## Current Phase
-Phase 12
+Phase 13 (design approval pending)
 
 ## Phases
 
@@ -63,7 +63,14 @@ Phase 12
 - Spec: docs/superpowers/specs/2026-10-27-dev-2-v11-adaptation-design.md.
 
 ### Phase 12: dev-2 implementation and acceptance
-**Status:** in_progress
+**Status:** complete
 - User approved design and requested theme-matched charts plus separate request-record/help pages.
 - Plan: docs/superpowers/plans/2026-10-28-dev-2-v11-adaptation.md.
 - Sequential task implementation with isolated review; preserve running instances and original dev.
+- Four pages implemented; final branch review and singleton size correction approved, rebuilt EXE verified. Full327/327 plus isolated source/packaged browser and standalone lifecycle acceptance.
+
+### Phase 13: Cross-platform release and confirmed port takeover
+**Status:** pending
+- User requested GitHub Actions automatic Release packages for Windows, macOS and Linux, plus explicit yes/no termination of identified filter-port owner before enabling.
+- Proposed Windowsx64/macOSarm64+x64/Linuxx64, embedded runtime, v* tag releases; identity revalidation, no silent privilege escalation/critical-process termination/recovery bypass.
+- Await combined design approval. Implementation, native macOS/Linux CI execution and remote release have not occurred.
