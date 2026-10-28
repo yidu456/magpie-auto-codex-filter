@@ -397,3 +397,40 @@ test('native Windows terminates only a tracked disposable listener while an unre
   assert.equal(unrelated.child.exitCode, null);
   assert.equal((await adapter.inspect(unrelated.port)).owner?.pid, unrelated.child.pid);
 });
+
+test('native Unix inspects a tracked listener, Linux revalidates before one kill and macOS stays display-only',
+  {skip: !['linux', 'darwin'].includes(process.platform), timeout: 90000}, async t => {
+    const {spawn} = require('node:child_process'), {once} = require('node:events');
+    const children = [];
+    t.after(async () => {
+      for (const child of children) if (child.exitCode === null && child.signalCode === null) {
+        const ended = once(child, 'exit'); child.kill('SIGKILL'); await ended;
+      }
+    });
+    const launch = async () => {
+      const child = spawn(process.execPath, ['-e', "require('node:net').createServer().listen(0,'0.0.0.0',function(){console.log(this.address().port)})"],
+        {stdio: ['ignore', 'pipe', 'pipe']}); children.push(child);
+      const [data] = await once(child.stdout, 'data'); return {child, port: Number(String(data).trim())};
+    };
+    const target = await launch(), other = await launch();
+    const killed = [], adapter = createPortOwner({killProcess: (pid, signal) => {
+      assert.equal(pid, target.child.pid); assert.equal(signal, 'SIGKILL');
+      killed.push(pid); process.kill(pid, signal);
+    }});
+    const conflict = await adapter.inspect(target.port);
+    assert.equal(conflict.owner?.pid, target.child.pid);
+    assert.ok(conflict.owner.executable.startsWith('/')); assert.ok(conflict.owner.started);
+    if (process.platform === 'darwin' || process.getuid() === 0) {
+      assert.equal(conflict.canTerminate, false);
+      assert.equal(conflict.reason, process.getuid() === 0 ? 'PROTECTED_PROCESS' : 'IDENTITY_UNAVAILABLE');
+      await assert.rejects(adapter.terminate(target.port, conflict.owner), {code: 'PORT_OWNER_UNSAFE'});
+      assert.deepEqual(killed, []);
+    } else {
+      assert.equal(conflict.canTerminate, true);
+      const ended = once(target.child, 'exit');
+      assert.deepEqual(await adapter.terminate(target.port, conflict.owner), {port: target.port, released: true});
+      await ended; assert.deepEqual(killed, [target.child.pid]);
+      assert.equal(target.child.signalCode, 'SIGKILL');
+    }
+    assert.equal(other.child.exitCode, null); assert.equal(other.child.signalCode, null);
+  });

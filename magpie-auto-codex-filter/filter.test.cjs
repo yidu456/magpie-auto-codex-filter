@@ -215,7 +215,7 @@ test('cancellation during cleanup backoff prevents the retry and leaves no activ
   assert.equal((await h.health()).stats.resourceRetries, 0);
 });
 
-test('conditional CMD start/logs/stop use independent runtime and restore exact addresses', async t => {
+test('conditional CMD start/stop and tracked log viewer use independent runtime and restore exact addresses', {skip: process.platform !== 'win32'}, async t => {
   const e = entry(), directory = fixture(t), configPath = path.join(directory, 'config.toml');
   const upstream = http.createServer((req, res) => { req.resume(); res.end('{}'); });
   const upstreamOrigin = await listen(upstream);
@@ -231,13 +231,15 @@ test('conditional CMD start/logs/stop use independent runtime and restore exact 
     const script = path.join(__dirname, '..', file); assert.ok(fs.existsSync(script), 'Conditional CMD is missing');
     const command = '""' + script + '" --port ' + port + ' --upstream ' + upstreamOrigin
       + ' --config "' + configPath + '" --runtime "' + runtime + '""';
-    const child = spawn(process.env.ComSpec, ['/d', '/s', '/c', command], {cwd: directory, windowsHide: true,
-      windowsVerbatimArguments: true, stdio: ['ignore', 'pipe', 'pipe']});
+    // Launch the continuous log viewer directly so cleanup never needs a process-tree kill.
+    const child = viewer ? spawn(process.execPath, [path.join(__dirname, 'filter.cjs'), 'logs', '--port', String(port),
+      '--upstream', upstreamOrigin, '--config', configPath, '--runtime', runtime], {cwd: directory, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']})
+      : spawn(process.env.ComSpec, ['/d', '/s', '/c', command], {cwd: directory, windowsHide: true,
+        windowsVerbatimArguments: true, stdio: ['ignore', 'pipe', 'pipe']});
     let output = '', closing = false;
     const closeViewer = () => {
       if (closing) return; closing = true;
-      const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {windowsHide: true, stdio: 'ignore'});
-      killer.on('error', reject);
+      child.kill('SIGKILL');
     };
     const timer = setTimeout(() => { if (viewer) closeViewer(); }, 5000);
     const collect = chunk => {

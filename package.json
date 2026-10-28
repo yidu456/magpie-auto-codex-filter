@@ -8,10 +8,11 @@
     "node": ">=24.12.0"
   },
   "scripts": {
-    "test": "node --test magpie-auto-codex-filter/*.test.cjs console/*.test.cjs scripts/*.test.cjs",
+    "test": "node --test --test-concurrency=1 magpie-auto-codex-filter/*.test.cjs console/*.test.cjs scripts/*.test.cjs",
     "start": "node console/main.cjs",
     "build": "node scripts/build.cjs",
-    "smoke:exe": "node scripts/smoke-exe.cjs dist/MagpieFilter.exe"
+    "package:release": "node scripts/package-release.cjs",
+    "smoke:exe": "node scripts/smoke-exe.cjs"
   },
   "devDependencies": {
     "esbuild": "0.28.2",

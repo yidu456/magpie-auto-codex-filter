@@ -10,8 +10,13 @@ const delta = frame('response.output_text.delta', {delta: 'fixture-first-delta'}
 const completed = frame('response.completed', {response: {usage: {input_tokens: 10, output_tokens: 2,
   total_tokens: 12, input_tokens_details: {cached_tokens: 4}}}});
 
-async function main() {
-  const exe = path.resolve(process.argv[2] || 'dist/MagpieFilter.exe');
+function standaloneEnvironment(directory, inherited = process.env) {
+  const bin = path.join(directory, 'no-node-bin'); fs.mkdirSync(bin);
+  return {...Object.fromEntries(Object.entries(inherited).filter(([key]) => !/^path$/i.test(key))), PATH: bin, NODE_OPTIONS: ''};
+}
+const exited = child => child.exitCode !== null || child.signalCode !== null;
+async function main({executable} = {}) {
+  const exe = path.resolve(executable || path.join('dist', process.platform === 'win32' ? 'MagpieFilter.exe' : 'MagpieFilter'));
   const root = path.resolve('.verification'); fs.mkdirSync(root, {recursive: true});
   const runtime = fs.mkdtempSync(path.join(root, 'exe-'));
   const configFile = path.join(runtime, 'MagpieFilter.config.json');
@@ -24,7 +29,7 @@ async function main() {
       handlers: {azureResource: true, encryptedContent: true, rateLimit: true, transport: true,
         streamIncomplete: true, alb400: true, unavailable: true}, revision: 0}}};
   const oldBytes = JSON.stringify(oldConfig, null, 2) + '\n'; fs.writeFileSync(configFile, oldBytes);
-  const children = [], env = {...process.env, PATH: process.env.WINDIR + '\\System32', NODE_OPTIONS: ''};
+  const children = [], env = standaloneEnvironment(runtime);
   const launch = (executable = exe, args = ['--runtime', runtime, '--no-open'], cwd = runtime) => {
     const child = spawn(executable, args, {cwd, env: {...env, CODEX_HOME: path.join(runtime, 'unused-codex-home')}, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']});
     child.output = ''; child.stdout.on('data', x => { child.output += x; }); child.stderr.on('data', x => { child.output += x; });
@@ -57,7 +62,7 @@ async function main() {
       const shell = await call(record.origin, page, {method: 'GET'});
       assert.equal(shell.status, 200); assert.match(shell.body, /page-dashboard/);
     }
-    const second = launch(); await wait(() => second.exitCode !== null); assert.equal(second.exitCode, 0, second.output);
+    const second = launch(); await wait(() => exited(second)); assert.equal(second.exitCode, 0, second.output);
     assert.equal(JSON.parse(fs.readFileSync(path.join(runtime, 'service.json'), 'utf8')).pid, first.pid);
     const received = [];
     let recoveryAttempts = 0, lateAttempts = 0, completedDelta = false;
@@ -148,8 +153,8 @@ async function main() {
     const nextToken = 'cd'.repeat(32);
     assert.equal((await call(record.origin, '/api/web', {headers: controlHeaders,
       body: JSON.stringify({revision: current.revision, web: {port: nextWebPort, token: nextToken}})})).status, 200);
-    const reopened = launch(); await wait(() => reopened.exitCode !== null); assert.equal(reopened.exitCode, 0, reopened.output);
-    assert.equal((await stop()).status, 200); await wait(() => first.exitCode !== null); assert.equal(first.exitCode, 0, first.output);
+    const reopened = launch(); await wait(() => exited(reopened)); assert.equal(reopened.exitCode, 0, reopened.output);
+    assert.equal((await stop()).status, 200); await wait(() => exited(first)); assert.equal(first.exitCode, 0, first.output);
     assert.equal(fs.existsSync(path.join(runtime, 'service.json')), false);
     assert.equal(fs.existsSync(path.join(runtime, 'instance.lock')), false);
     const checkpoint = fs.readFileSync(path.join(runtime, 'metrics.json'), 'utf8');
@@ -172,13 +177,14 @@ async function main() {
     assert.deepEqual(current.metrics.latency, savedMetrics.latency);
     assert.deepEqual(current.metrics.byModel, savedMetrics.byModel);
     assert.deepEqual(current.metrics.series, []); assert.deepEqual(current.metrics.recent, []); assert.deepEqual(current.metrics.active, []);
-    assert.equal((await stop()).status, 200); await wait(() => restarted.exitCode !== null);
+    assert.equal((await stop()).status, 200); await wait(() => exited(restarted));
     assert.equal(restarted.exitCode, 0, restarted.output);
     assert.equal(fs.readFileSync(configFile, 'utf8'), edited);
     assert.equal(fs.readFileSync(configPath, 'utf8'), original); record = null;
     const copyDirectory = path.join(runtime, 'copied'), alternateCwd = path.join(runtime, 'alternate-cwd');
     fs.mkdirSync(copyDirectory); fs.mkdirSync(alternateCwd);
-    const copiedExe = path.join(copyDirectory, 'MagpieFilter.exe'); fs.copyFileSync(exe, copiedExe);
+    const copiedExe = path.join(copyDirectory, path.basename(exe)); fs.copyFileSync(exe, copiedExe);
+    if (process.platform !== 'win32') fs.chmodSync(copiedExe, 0o755);
     const copyReservation = http.createServer();
     const copyPort = Number(new URL(await listen(copyReservation)).port); await close(copyReservation);
     const adjacentConfig = path.join(copyDirectory, 'MagpieFilter.config.json');
@@ -194,7 +200,7 @@ async function main() {
     assert.equal(fs.readFileSync(adjacentConfig, 'utf8'), directBytes);
     assert.equal(fs.existsSync(path.join(alternateCwd, 'MagpieFilter.config.json')), false);
     assert.equal(fs.existsSync(path.join(alternateCwd, '.magpie-filter')), false);
-    assert.equal((await stop()).status, 200); await wait(() => copied.exitCode !== null); assert.equal(copied.exitCode, 0, copied.output); record = null;
+    assert.equal((await stop()).status, 200); await wait(() => exited(copied)); assert.equal(copied.exitCode, 0, copied.output); record = null;
     console.log(JSON.stringify({exe, runtime, standaloneStartup: true, embeddedAssets: true, singleInstance: true,
       fixtureFilterAndBypass: true, portableSettings: true, pendingWebRotation: true,
       literalOldConfigReadOnly: true, oldUnbufferedDirect: true, protectedFirstDelta: true, earlyRecovery: true,
@@ -203,11 +209,12 @@ async function main() {
   } finally {
     releaseDelta?.();
     await stop().catch(() => {});
-    for (const child of children) if (child.exitCode === null && child.signalCode === null) {
+    for (const child of children) if (!exited(child)) {
       child.kill('SIGKILL');
       await wait(() => child.exitCode !== null || child.signalCode !== null);
     }
     if (upstreamServer) await close(upstreamServer);
   }
 }
-main().catch(error => { console.error(error); process.exitCode = 1; });
+if (require.main === module) main({executable: process.argv[2]}).catch(error => { console.error(error); process.exitCode = 1; });
+module.exports = {main, standaloneEnvironment};
