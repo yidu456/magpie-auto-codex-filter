@@ -74,3 +74,58 @@ test('packaging refuses foreign targets, modified executable, missing files and 
   }
   assert.equal(fs.existsSync(path.join(directory, 'release')), false);
 });
+
+test('Unix launcher mode seam explicitly restores executable bits before archive creation despite restrictive umask', t => {
+  const vm = require('node:vm');
+  for (const mask of [0o077, 0o111]) {
+    const {directory, outputDirectory} = input(t);
+    const native = {platform: 'darwin', arch: 'arm64', target: 'macos-arm64', executable: 'MagpieFilter'};
+    fs.writeFileSync(path.join(outputDirectory, native.executable), 'owned executable fixture');
+    fs.writeFileSync(path.join(outputDirectory, 'build-info.json'), JSON.stringify({...native,
+      node: process.version, sha256: hash(path.join(outputDirectory, native.executable))}));
+    const modes = new Map(), module = {exports: {}};
+    const imports = name => {
+      if (name === './build.cjs') return {nativeTarget: () => native};
+      if (name === 'node:fs') return {...fs,
+        writeFileSync: (file, bytes, options) => {
+          fs.writeFileSync(file, bytes, options);
+          if (options?.mode) modes.set(file, options.mode & ~mask);
+        },
+        chmodSync: (file, mode) => { modes.set(file, mode); fs.chmodSync(file, mode); }};
+      if (name === 'node:child_process') return {spawnSync: (command, args, options) => {
+        const payload = path.join(args[3], 'MagpieFilter-macos-arm64');
+        for (const file of ['MagpieFilter', 'start.sh', 'Start-MagpieFilter.command']) {
+          assert.equal(modes.get(path.join(payload, file)), 0o755, file + ' under umask ' + mask.toString(8));
+        }
+        return spawnSync(command, args, options);
+      }};
+      return require(name);
+    };
+    // Simulated Darwin filesystem semantics only; Windows cannot establish native Unix archive permissions.
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'package-release.cjs'), 'utf8'), {require: imports, module, process});
+    module.exports.packageRelease({outputDirectory, releaseDirectory: path.join(directory, 'release')});
+  }
+});
+
+test('native Unix archives preserve 0755 launchers under restrictive umask and launch from alternate cwd',
+  {skip: process.platform === 'win32'}, t => {
+    const {packageRelease} = require('./package-release.cjs');
+    // A real 0111 umask also removes directory traversal; the filesystem seam covers its file-mode effect.
+    for (const mask of [0o077]) {
+      const {directory, outputDirectory, target} = input(t);
+      let result;
+      const previous = process.umask(mask);
+      try { result = packageRelease({outputDirectory, releaseDirectory: path.join(directory, 'release')}); }
+      finally { process.umask(previous); }
+      const extracted = path.join(directory, 'extracted with spaces'); fs.mkdirSync(extracted);
+      const extraction = spawnSync('tar', ['-xf', result.archive, '-C', extracted], {encoding: 'utf8', timeout: 10000});
+      assert.equal(extraction.status, 0, extraction.stderr);
+      const payload = path.join(extracted, 'MagpieFilter-' + target);
+      for (const file of ['start.sh', ...(process.platform === 'darwin' ? ['Start-MagpieFilter.command'] : [])]) {
+        assert.equal(fs.statSync(path.join(payload, file)).mode & 0o777, 0o755, file);
+        const launched = spawnSync(path.join(payload, file), ['argument with spaces'], {cwd: directory, encoding: 'utf8', timeout: 10000});
+        assert.equal(launched.status, 0, launched.stderr);
+        assert.deepEqual(launched.stdout.trim().split('\n'), [path.join(payload, 'MagpieFilter'), 'argument with spaces']);
+      }
+    }
+  });

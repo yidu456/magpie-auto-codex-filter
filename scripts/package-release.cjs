@@ -40,7 +40,8 @@ function packageRelease({outputDirectory, releaseDirectory} = {}) {
     const files = [...inputs, 'START-HERE.txt'];
     if (native.platform !== 'win32') {
       for (const file of ['start.sh', ...(native.platform === 'darwin' ? ['Start-MagpieFilter.command'] : [])]) {
-        fs.writeFileSync(path.join(payload, file), launcher, {mode: 0o755}); files.push(file);
+        fs.writeFileSync(path.join(payload, file), launcher, {mode: 0o755});
+        fs.chmodSync(path.join(payload, file), 0o755); files.push(file);
       }
       fs.chmodSync(path.join(payload, native.executable), 0o755);
     }
