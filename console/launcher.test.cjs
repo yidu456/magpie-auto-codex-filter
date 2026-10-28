@@ -53,7 +53,7 @@ test('singleton verifier accepts saturated bounded metrics and log metadata', as
     if (i < 180) now += 60000;
     const requestId = String(i).padStart(100, 'x');
     recorder.observe('request-started', {requestId, enabled: true, policyRevision: max,
-      model: (String(i) + '"'.repeat(120)).slice(0, 120), streaming: true});
+      model: (String(i) + '\ud800'.repeat(120)).slice(0, 120), streaming: true});
     recorder.observe('forwarded', {requestId, status: 599, ttfbMs: max});
     recorder.observe('response-usage', {requestId, usage: {input_tokens: max, output_tokens: max,
       total_tokens: max, input_tokens_details: {cached_tokens: max}}});
@@ -70,16 +70,16 @@ test('singleton verifier accepts saturated bounded metrics and log metadata', as
   const controller = require('./controller.cjs').createController({runtime: fixture(t)});
   t.after(() => controller.close());
   const application = {service: 'magpie-filter-console-v1', pid: process.pid, instance: 'ab'.repeat(16)};
-  // Include all allowed log fields at their escaped-string bounds, not just today's event shapes.
+  // Lone surrogates expand sixfold in JSON; cover every allowed log field, not just today's event shapes.
   const logRow = {id: max, time: new Date(now).toISOString(), event: 'request-metadata'};
   for (const key of ['requestId', 'policyRevision', 'cleanup', 'enabled', 'state', 'handler', 'kind', 'errorCode',
     'code', 'retry', 'retries', 'delayMs', 'durationMs', 'outcome', 'phase', 'elapsedMs', 'removed', 'removedItemIds', 'status']) {
-    logRow[key] = ['errorCode', 'code'].includes(key) ? 'e'.repeat(160) : '"'.repeat(160);
+    logRow[key] = ['errorCode', 'code'].includes(key) ? 'e'.repeat(160) : '\ud800'.repeat(160);
   }
   const state = {...controller.status(), metrics, application, events: Array.from({length: 200}, () => ({...logRow})),
     activePolicies: metrics.active.map(({requestId, policyRevision}) => ({requestId, policyRevision}))};
   t.diagnostic('Bounded state characters: ' + JSON.stringify(state).length + '; metrics: ' + JSON.stringify(metrics).length);
-  assert.ok(JSON.stringify(state).length > 2 * 1024 * 1024);
+  assert.ok(JSON.stringify(state).length > 4 * 1024 * 1024);
   const token = 'cd'.repeat(32), server = require('./server.cjs').createManagementServer({token, controller: {status: () => state}});
   t.after(() => close(server));
   const origin = await listen(server);
@@ -94,7 +94,7 @@ test('singleton verifier still rejects oversized, malformed and mismatched respo
   t.after(() => close(server));
   const record = {origin: await listen(server), ...application}, token = 'cd'.repeat(32);
   for (const [name, code, body] of [
-    ['oversized', 200, JSON.stringify({padding: 'x'.repeat(4 * 1024 * 1024), application})],
+    ['oversized', 200, JSON.stringify({padding: 'x'.repeat(8 * 1024 * 1024), application})],
     ['malformed', 200, '{'],
     ['wrong status', 503, JSON.stringify({application})],
     ['wrong service', 200, JSON.stringify({application: {...application, service: 'other'}})],
