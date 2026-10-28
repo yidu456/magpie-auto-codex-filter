@@ -18,7 +18,7 @@
   <main id="console">
     <header class="page-header"><div><p class="breadcrumb">工作空间 / 过滤器</p><h1 id="page-title" tabindex="-1">过滤控制台</h1><p id="page-description">保留有效的保护，把选择权留给你。</p></div><span class="badge" id="connection-state">正在连接控制台</span></header>
     <div id="notice" class="notice" role="status" aria-live="polite">正在读取本地设置…</div>
-    <section id="login" class="panel" aria-labelledby="login-title">
+    <section id="login" class="panel" aria-labelledby="login-title" hidden>
       <div class="section-heading"><div><h2 id="login-title">登录本地控制台</h2><p>在 EXE 同目录的 MagpieFilter.config.json 中查看 web.token。令牌只用于本机管理，不是模型 API 密钥。</p></div></div>
       <form id="login-form">
         <div class="connection-fields"><label class="config-field">管理令牌<input id="login-token" type="password" required pattern="[a-fA-F0-9]{64}" minlength="64" maxlength="64" autocomplete="off" spellcheck="false" placeholder="64 位十六进制令牌"></label></div>
@@ -71,12 +71,14 @@
       </form>
     </section>
     <section class="panel" aria-labelledby="web-title">
-      <div class="section-heading"><div><h2 id="web-title">网页与便携配置</h2><p>网页修改写入同一配置文件。网页端口和令牌在下次启动生效，当前会话继续可用。</p></div></div>
+      <div class="section-heading"><div><h2 id="web-title">网页与便携配置</h2><p>网页修改写入同一配置文件。网页端口、管理鉴权和令牌在下次启动生效，当前会话继续可用。</p></div></div>
       <p class="config-location">配置文件：<span id="config-file"></span></p>
       <form id="web-form">
+        <label><input id="web-auth-enabled" type="checkbox" aria-describedby="web-auth-warning">启用本地管理令牌鉴权</label>
+        <p id="web-auth-warning">新配置默认关闭。关闭时本机程序无需令牌即可调用管理操作；仍仅监听本机，并验证 Host / Origin 与请求边界。启用后需管理令牌登录，与模型 API 密钥无关。</p>
         <div class="connection-fields web-fields">
           <label>网页端口<input id="web-port" type="number" min="1024" max="65535" required placeholder="18185"></label>
-          <label>新管理令牌（留空不变）<input id="web-token" type="password" pattern="[a-fA-F0-9]{64}" minlength="64" maxlength="64" autocomplete="off" spellcheck="false" placeholder="64 位十六进制令牌"></label>
+          <label id="web-token-field" hidden>新管理令牌（留空不变）<input id="web-token" type="password" pattern="[a-fA-F0-9]{64}" minlength="64" maxlength="64" autocomplete="off" spellcheck="false" placeholder="64 位十六进制令牌"></label>
         </div>
         <div class="form-footer"><span id="web-hint"></span><button id="save-web" type="submit">保存网页设置</button></div>
       </form>

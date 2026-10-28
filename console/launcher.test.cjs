@@ -14,11 +14,11 @@ vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'main.cjs'), 'utf8')
   + '\nmodule.exports = verifyRunning;', verifierContext);
 const verifyRunning = verifierContext.module.exports;
 
-async function portableFixture(t) {
+async function portableFixture(t, authEnabled = false) {
   const runtime = fixture(t), reservation = http.createServer();
   const port = Number(new URL(await listen(reservation)).port); await close(reservation);
   const store = require('./configuration.cjs').createConfigStore(path.join(runtime, 'MagpieFilter.config.json'));
-  store.save({web: {...store.current.web, port}}, 0);
+  store.save({web: {...store.current.web, port, authEnabled}}, 0);
   return runtime;
 }
 
@@ -46,7 +46,7 @@ function readRecord(runtime) {
   } catch { return null; }
 }
 async function quit(record) {
-  const headers = {'x-console-token': record.token, 'content-type': 'application/json'};
+  const headers = {'content-type': 'application/json', ...(record.token ? {'x-console-token': record.token} : {})};
   const state = JSON.parse((await call(record.origin, '/api/state', {method: 'GET', headers})).body);
   return call(record.origin, '/api/exit', {headers, body: JSON.stringify({revision: state.revision})});
 }
@@ -129,7 +129,9 @@ test('launcher is single-instance, inert by default and exits through authentica
   assert.equal(state.settings.policy.enabled, false);
   const config = JSON.parse(fs.readFileSync(path.join(runtime, 'MagpieFilter.config.json')));
   assert.equal(record.origin, 'http://127.0.0.1:' + config.web.port);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(runtime, 'service.json'))).token, config.web.token);
+  const cached = JSON.parse(fs.readFileSync(path.join(runtime, 'service.json')));
+  assert.equal(cached.authEnabled, false); assert.equal(Object.hasOwn(cached, 'token'), false);
+  assert.equal((await call(record.origin, '/api/state', {method: 'GET'})).status, 200);
   const second = start(runtime); children.push(second);
   await waitFor(() => exited(second));
   assert.equal(second.exitCode, 0, second.output);
@@ -231,7 +233,7 @@ test('fresh launch follows edited token, web port and enabled policy without res
 });
 
 test('BOM config and pending token rotation do not prevent reopening the live instance', async t => {
-  const runtime = await portableFixture(t), file = path.join(runtime, 'MagpieFilter.config.json');
+  const runtime = await portableFixture(t, true), file = path.join(runtime, 'MagpieFilter.config.json');
   fs.writeFileSync(file, '\uFEFF' + fs.readFileSync(file, 'utf8'));
   const children = []; let record;
   t.after(async () => { if (record) await quit(record).catch(() => {}); for (const c of children) await stopChild(c); });
@@ -246,6 +248,67 @@ test('BOM config and pending token rotation do not prevent reopening the live in
   const third = start(runtime); children.push(third); await waitFor(() => exited(third));
   assert.equal(third.exitCode, 0, third.output);
   await quit(record); await waitFor(() => exited(first)); record = null;
+});
+
+test('production launcher auth changes and token rotation activate only after real restart', async t => {
+  const runtime = await portableFixture(t), children = []; let record;
+  t.after(async () => { if (record) await quit(record).catch(() => {}); for (const child of children) await stopChild(child); });
+  const launch = async () => {
+    const child = start(runtime); children.push(child);
+    record = await waitFor(() => { try { return JSON.parse(fs.readFileSync(path.join(runtime, 'service.json'))); } catch { return null; } });
+    return child;
+  };
+  const state = async () => JSON.parse((await call(record.origin, '/api/state', {method: 'GET',
+    headers: record.authEnabled ? {'x-console-token': record.token} : {}})).body);
+  const save = async web => {
+    const result = await call(record.origin, '/api/web', {headers: {'content-type': 'application/json',
+      ...(record.authEnabled ? {'x-console-token': record.token} : {})}, body: JSON.stringify({revision: (await state()).revision, web})});
+    assert.equal(result.status, 200, result.body); return JSON.parse(result.body);
+  };
+  const duplicate = async () => { const child = start(runtime); children.push(child); await waitFor(() => exited(child)); assert.equal(child.exitCode, 0, child.output); };
+  const stop = async child => { assert.equal((await quit(record)).status, 200); await waitFor(() => exited(child)); record = null; };
+  let child = await launch();
+  assert.equal(record.authEnabled, false); assert.equal(Object.hasOwn(record, 'token'), false);
+  const firstToken = JSON.parse(fs.readFileSync(path.join(runtime, 'MagpieFilter.config.json'))).web.token;
+  let next = await save({port: (await state()).web.port, authEnabled: true, token: 'ef'.repeat(32)});
+  assert.equal(next.web.authEnabled, true); assert.equal(next.web.activeAuthEnabled, false); assert.equal(next.web.restartRequired, true);
+  assert.deepEqual(JSON.parse((await call(record.origin, '/api/auth', {method: 'GET'})).body), {authRequired: false});
+  await duplicate(); await stop(child); child = await launch();
+  assert.equal(record.authEnabled, true); assert.equal(record.token, 'ef'.repeat(32));
+  assert.equal((await call(record.origin, '/api/state', {method: 'GET'})).status, 403);
+  assert.equal((await call(record.origin, '/api/state', {method: 'GET', headers: {'x-console-token': firstToken}})).status, 403);
+  assert.equal((await state()).web.restartRequired, false);
+  next = await save({port: (await state()).web.port, authEnabled: false, token: 'cd'.repeat(32)});
+  assert.equal(next.web.activeAuthEnabled, true); assert.equal(next.web.authEnabled, false);
+  assert.equal((await call(record.origin, '/api/state', {method: 'GET'})).status, 403);
+  assert.equal((await call(record.origin, '/api/state', {method: 'GET', headers: {'x-console-token': 'cd'.repeat(32)}})).status, 403);
+  await duplicate(); await stop(child); child = await launch();
+  assert.equal(record.authEnabled, false); assert.equal(Object.hasOwn(record, 'token'), false);
+  assert.equal((await state()).web.restartRequired, false); await duplicate(); await stop(child);
+  assert.doesNotMatch(children.map(child => child.output).join(''), /(?:ef|cd){32}/);
+});
+
+test('singleton verifier uses active mode, protects missing flags, and rejects malformed flags', async t => {
+  const application = {service: 'magpie-filter-console-v1', pid: process.pid, instance: 'ab'.repeat(16)};
+  const headers = [], server = http.createServer((req, res) => { headers.push(req.headers); res.end(JSON.stringify({application})); });
+  t.after(() => close(server)); const record = {origin: await listen(server), ...application};
+  assert.equal(await verifyRunning({...record, authEnabled: false}), true);
+  assert.equal(headers.at(-1)['x-console-token'], undefined);
+  assert.equal(await verifyRunning(record), false);
+  assert.equal(await verifyRunning(record, 'cd'.repeat(32)), true);
+  assert.equal(headers.at(-1)['x-console-token'], 'cd'.repeat(32));
+  for (const authEnabled of ['false', null, 0]) assert.equal(await verifyRunning({...record, authEnabled}, 'cd'.repeat(32)), false);
+});
+
+test('console browser URL includes fragment only for protected active or legacy records', async () => {
+  const urls = [], context = {module: {exports: {}}, __dirname, process, Buffer, URL,
+    require: name => name === './browser.cjs' ? {openBrowser: async url => { urls.push(url); }} : require(name)};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'main.cjs'), 'utf8') + '\nmodule.exports = openConsole;', context);
+  const open = context.module.exports, origin = 'http://127.0.0.1:1234', token = 'ab'.repeat(32);
+  await open({origin, authEnabled: false}, token, 'config', 'service');
+  await open({origin, authEnabled: true}, token, 'config', 'service');
+  await open({origin}, token, 'config', 'service');
+  assert.deepEqual(urls, [origin + '/', origin + '/#token=' + token, origin + '/#token=' + token]);
 });
 
 test('startup recovery failures still publish an authenticated management console', async t => {

@@ -6,7 +6,7 @@ const {spawn} = require('node:child_process');
 const {createConfigStore} = require('../console/configuration.cjs');
 const {listen, close} = require('../magpie-auto-codex-filter/test-support.cjs');
 
-async function createUIFixture({executable, open = false} = {}) {
+async function createUIFixture({executable, open = false, authEnabled = true} = {}) {
   const root = path.resolve(__dirname, '../.verification'); fs.mkdirSync(root, {recursive: true});
   const runtime = fs.mkdtempSync(path.join(root, 'ui-fixture-'));
   const upstream = http.createServer((req, res) => { req.resume(); req.on('end', () => res.end('{}')); });
@@ -28,7 +28,7 @@ async function createUIFixture({executable, open = false} = {}) {
     const configPath = path.join(runtime, 'mock-codex.toml');
     fs.writeFileSync(configPath, '[model_providers.mock]\nbase_url="' + origin + '/v1"\n');
     const store = createConfigStore(path.join(runtime, 'MagpieFilter.config.json'));
-    store.save({web: {port: webPort, token: 'ab'.repeat(32)}, settings: {...store.current.settings,
+    store.save({web: {port: webPort, token: 'ab'.repeat(32), authEnabled}, settings: {...store.current.settings,
       port: filterPort, upstream: origin, configPath}}, 0);
     const args = [...(executable ? [] : [path.resolve(__dirname, '../console/main.cjs')]), '--runtime', runtime];
     if (!open) args.push('--no-open');

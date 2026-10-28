@@ -4,6 +4,42 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const {fixture, listen, close, call} = require('../magpie-auto-codex-filter/test-support.cjs');
 
+for (const authEnabled of [false, true]) test('auth discovery and management guards with auth ' + authEnabled, async t => {
+  const token = 'fixture-secret', controller = require('./controller.cjs').createController({runtime: fixture(t)});
+  t.after(() => controller.close());
+  const server = require('./server.cjs').createManagementServer({controller, token, authEnabled});
+  t.after(() => close(server)); const origin = await listen(server);
+  const request = (route, headers = {}, options = {}) => call(origin, route, {method: 'GET', headers, ...options});
+  const discovery = await request('/api/auth');
+  assert.equal(discovery.status, 200);
+  assert.deepEqual(JSON.parse(discovery.body), {authRequired: authEnabled});
+  assert.equal((await request('/api/state')).status, authEnabled ? 403 : 200);
+  assert.equal((await request('/api/state', {'x-console-token': token})).status, 200);
+  for (const headers of [{host: 'evil.test'}, {origin: 'https://evil.test'}, {'sec-fetch-site': 'cross-site'}, {'sec-fetch-site': 'same-site'}]) {
+    for (const route of ['/api/auth', '/api/state']) assert.equal((await request(route, {...headers, 'x-console-token': token})).status, 403);
+  }
+  const headers = {'x-console-token': token};
+  assert.equal((await request('/api/web', headers, {method: 'POST', body: '{}'})).status, 415);
+  assert.equal((await request('/api/web', {...headers, 'content-type': 'application/json'}, {method: 'POST', body: 'x'.repeat(33000)})).status, 413);
+  assert.doesNotMatch(discovery.body, /fixture-secret|pid|revision|web|settings/);
+});
+
+test('auth flag save stays restart-only and retains token when the web patch omits it', async t => {
+  const fs = require('node:fs'), path = require('node:path'), runtime = fixture(t);
+  const controller = require('./controller.cjs').createController({runtime}); t.after(() => controller.close());
+  const token = JSON.parse(fs.readFileSync(path.join(runtime, 'MagpieFilter.config.json'))).web.token;
+  const server = require('./server.cjs').createManagementServer({controller, token, authEnabled: false});
+  t.after(() => close(server)); const origin = await listen(server);
+  const saved = await call(origin, '/api/web', {headers: {'content-type': 'application/json'},
+    body: JSON.stringify({revision: 0, web: {port: controller.status().web.port, authEnabled: true}})});
+  assert.equal(saved.status, 200, saved.body);
+  assert.deepEqual(JSON.parse(saved.body).web, {port: 18185, activePort: 18185, authEnabled: true, activeAuthEnabled: false, restartRequired: true});
+  assert.equal(JSON.parse(fs.readFileSync(path.join(runtime, 'MagpieFilter.config.json'))).web.token, token);
+  assert.doesNotMatch(saved.body, new RegExp(token));
+  assert.deepEqual(JSON.parse((await call(origin, '/api/auth', {method: 'GET'})).body), {authRequired: false});
+  assert.equal((await call(origin, '/api/state', {method: 'GET'})).status, 200);
+});
+
 test('management enforces token, origin, host, request size and route boundaries', async t => {
   const controller = require('./controller.cjs').createController({runtime: fixture(t)});
   t.after(() => controller.close());

@@ -116,7 +116,9 @@ function createController({runtime, configStore, portOwner = createPortOwner()})
     const metrics = recorder.snapshot();
     return {revision, settings, configFile: store.filename,
     web: {port: store.current.web.port, activePort: activeWeb.port,
-      restartRequired: store.current.web.port !== activeWeb.port || store.current.web.token !== activeWeb.token},
+      authEnabled: store.current.web.authEnabled, activeAuthEnabled: activeWeb.authEnabled,
+      restartRequired: store.current.web.port !== activeWeb.port || store.current.web.token !== activeWeb.token
+        || store.current.web.authEnabled !== activeWeb.authEnabled},
     connected: !!proxy?.listening,
     attached: router?.state === 'filtering', state: closed ? 'closed' : lastError ? 'needs-attention' : router?.state || 'idle',
     lastError, transitioning, portConflictPending, portConflict: currentConflict(), connection: connection ? {...connection} : null,
@@ -279,7 +281,7 @@ function createController({runtime, configStore, portOwner = createPortOwner()})
     updateWeb: ({revision: expected, web, ...extra}) => mutate(() => {
       if (closed || Object.keys(extra).length || expected !== revision) throw new Error('Settings revision changed or console is closed.');
       if (!web || typeof web !== 'object' || Array.isArray(web)) throw new Error('Invalid web settings.');
-      web = {token: store.current.web.token, ...web};
+      web = {token: store.current.web.token, authEnabled: store.current.web.authEnabled, ...web};
       if (connection && (web.port === connection.port || Number(new URL(connection.upstream).port || 80) === web.port)) {
         throw new Error('Web port conflicts with the current connection.');
       }

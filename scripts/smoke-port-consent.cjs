@@ -5,7 +5,7 @@ const {spawn} = require('node:child_process');
 const {createUIFixture} = require('./serve-ui-fixture.cjs');
 const exited = child => child.exitCode !== null || child.signalCode !== null;
 
-async function main({executable, browserConsent = false} = {}) {
+async function main({executable, browserConsent = false, authEnabled = true} = {}) {
   let fixture, browser;
   // This child owns the only ephemeral port offered for confirmation; never select an existing listener.
   const child = spawn(process.execPath, ['-e', "require('node:http').createServer((q,s)=>s.end('owned fixture')).listen(0,'127.0.0.1',function(){console.log(this.address().port)})"],
@@ -21,8 +21,8 @@ async function main({executable, browserConsent = false} = {}) {
       child.stdout.once('data', data => resolve(Number(String(data).trim()))); child.once('error', reject);
     }), 10000);
     assert.ok(Number.isInteger(port) && port > 1024);
-    fixture = await createUIFixture({executable}); await bounded(fixture.ready, 15000);
-    const headers = {'x-console-token': 'ab'.repeat(32), 'content-type': 'application/json'};
+    fixture = await createUIFixture({executable, authEnabled}); await bounded(fixture.ready, 15000);
+    const headers = {'content-type': 'application/json', ...(authEnabled ? {'x-console-token': 'ab'.repeat(32)} : {})};
     const request = async (route, body) => {
       const response = await fetch(fixture.origin + route, {method: body ? 'POST' : 'GET', headers,
         ...(body ? {body: JSON.stringify(body)} : {}), signal: AbortSignal.timeout(90000)});
@@ -35,7 +35,7 @@ async function main({executable, browserConsent = false} = {}) {
       const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       browser = await chromium.launch({headless: true, channel: process.env.BROWSER_CHANNEL || 'chrome'});
       page = await browser.newPage(); page.setDefaultTimeout(90000);
-      await page.goto(fixture.origin + '/#token=' + 'ab'.repeat(32));
+      await page.goto(fixture.origin + '/' + (authEnabled ? '#token=' + 'ab'.repeat(32) : ''));
       await page.locator('#controls').waitFor({state: 'visible'});
       await page.locator('nav a[data-page=settings]').click();
       await page.locator('#port').fill(String(port)); await page.locator('#save-connection').click();

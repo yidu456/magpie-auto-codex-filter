@@ -1,8 +1,8 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const tokenFromUrl = new URLSearchParams(location.hash.slice(1)).get('token');
-if (tokenFromUrl) { sessionStorage.setItem('console-token', tokenFromUrl); history.replaceState(null, '', location.pathname + location.search); }
-let token = sessionStorage.getItem('console-token');
+if (new URLSearchParams(location.hash.slice(1)).has('token')) history.replaceState(null, '', location.pathname + location.search);
+let token = null, authRequired = null;
 let state, busy = false, dirty = false, webDirty = false, exited = false, poll;
 let dialogConsent = null, consentTimer;
 const policyInputs = [...document.querySelectorAll('[name=cleanup], [data-handler]'), $('enabled'), $('delivery-mode'), $('heartbeat')];
@@ -40,16 +40,18 @@ const states = {idle: '未接入', filtering: '配置已接入', 'waiting-for-co
 function notice(message, error = false) { $('notice').textContent = message; $('notice').classList.toggle('error', error); }
 async function api(route, body) {
   const response = await fetch(route, {method: body === undefined ? 'GET' : 'POST', cache: 'no-store',
-    headers: {'x-console-token': token || '', 'content-type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)});
+    headers: {'content-type': 'application/json', ...(authRequired && token ? {'x-console-token': token} : {})}, body: body === undefined ? undefined : JSON.stringify(body)});
   const result = await response.json();
   if (!response.ok) {
     if (response.status === 403) {
       dismissConsent();
-      token = null; sessionStorage.removeItem('console-token'); state = null;
-      $('login').hidden = false; $('controls').hidden = true;
-      $('connection-state').textContent = '需要登录';
+      if (authRequired === true) {
+        token = null; sessionStorage.removeItem('console-token'); state = null;
+        $('login').hidden = false; $('controls').hidden = true;
+        $('connection-state').textContent = '需要登录';
+      }
     }
-    throw Object.assign(new Error(response.status === 403 ? '令牌无效或已过期，请输入当前生效的管理令牌。' : result.error || '本地服务返回错误'),
+    throw Object.assign(new Error(response.status === 403 && authRequired === true ? '令牌无效或已过期，请输入当前生效的管理令牌。' : result.error || '本地服务返回错误'),
       {status: response.status, code: result.code, conflict: result.conflict});
   }
   return result;
@@ -229,11 +231,13 @@ function render() {
   $('port-conflict-no').disabled = working;
   $('port-conflict-yes').disabled = working || !dialogConsent?.canTerminate;
   $('config-file').textContent = state.configFile;
-  if (!webDirty) $('web-port').value = state.web.port;
+  if (!webDirty) { $('web-port').value = state.web.port; $('web-auth-enabled').checked = state.web.authEnabled; }
+  $('web-token-field').hidden = !$('web-auth-enabled').checked;
   for (const input of document.querySelectorAll('#web-form input, #web-form button')) input.disabled = working;
   $('web-hint').textContent = state.web.restartRequired
     ? '已保存，重启本程序后生效。当前地址：' + location.origin + '；下次地址：http://127.0.0.1:' + state.web.port + '/。退出后再双击 EXE。'
     : '当前地址：' + location.origin + '/。网页端口默认 18185，与过滤端口分开。';
+  $('web-hint').textContent += ' 当前管理鉴权：' + (state.web.activeAuthEnabled ? '开启' : '关闭') + '；下次启动：' + (state.web.authEnabled ? '开启' : '关闭') + '。';
   for (const input of policyInputs) input.disabled = working;
   $('enabled').checked = policy.enabled;
   for (const input of document.querySelectorAll('[name=cleanup]')) input.checked = input.value === policy.cleanup;
@@ -270,7 +274,7 @@ function dismissConsent() {
   if ($('port-conflict-dialog').open) $('port-conflict-dialog').close();
 }
 function openConsent(conflict) {
-  if (!state || !token || busy || state.transitioning || !conflict || conflict.revision !== state.revision
+  if (!state || authRequired && !token || busy || state.transitioning || !conflict || conflict.revision !== state.revision
     || state.portConflict?.challenge !== conflict.challenge || Date.now() >= conflict.expiresAt) return;
   dismissConsent(); dialogConsent = conflict;
   const owner = conflict.owner;
@@ -296,7 +300,7 @@ async function resolveConsent(confirm) {
   } catch (error) {
     fresh = error.conflict;
     notice('未完成：' + error.message + (error.status ? '' : '。请求结果尚未确认；已发出的操作不会因网页断开而撤销。'), true);
-    if (token) { try { state = await api('/api/state'); } catch {} }
+    if (authRequired === false || token) { try { state = await api('/api/state'); } catch {} }
   } finally { busy = false; dismissConsent(); render(); }
   if (fresh) openConsent(fresh);
 }
@@ -348,11 +352,11 @@ $('connection-form').addEventListener('submit', async event => {
   }
   render();
 });
-$('web-form').addEventListener('input', () => { webDirty = true; });
+$('web-form').addEventListener('input', () => { webDirty = true; $('web-token-field').hidden = !$('web-auth-enabled').checked; });
 $('web-form').addEventListener('submit', async event => {
   event.preventDefault();
   if (busy || !state || !$('web-form').reportValidity()) return;
-  const web = {port: Number($('web-port').value)};
+  const web = {port: Number($('web-port').value), authEnabled: $('web-auth-enabled').checked};
   if ($('web-token').value.trim()) web.token = $('web-token').value.trim();
   busy = true; render();
   try {
@@ -390,7 +394,7 @@ $('exit').addEventListener('click', async () => {
 });
 async function refresh() {
   if (exited) return;
-  if (!busy && token) {
+  if (!busy && (authRequired === false || token)) {
     try {
       const next = await api('/api/state');
       if (!busy && (!state || next.revision >= state.revision)) {
@@ -404,5 +408,20 @@ async function refresh() {
   if (!exited) poll = setTimeout(refresh, document.hidden ? 5000 : 1500);
 }
 showPage();
-if (!token) { $('connection-state').textContent = '需要登录'; notice('请输入 EXE 同目录配置文件中的 web.token，或再次双击 EXE 自动登录。'); }
-refresh();
+async function initialize() {
+  try {
+    const discovery = await api('/api/auth');
+    if (typeof discovery.authRequired !== 'boolean') throw new Error('无法确认本地管理鉴权状态。');
+    authRequired = discovery.authRequired;
+    if (authRequired) {
+      token = tokenFromUrl || sessionStorage.getItem('console-token');
+      $('login').hidden = !!token;
+      if (!token) { $('connection-state').textContent = '需要登录'; notice('请输入 EXE 同目录配置文件中的 web.token，或再次双击 EXE 自动登录。'); }
+      if (tokenFromUrl) {
+        state = await api('/api/state'); sessionStorage.setItem('console-token', token); render();
+      }
+    } else { sessionStorage.removeItem('console-token'); $('login').hidden = true; }
+    refresh();
+  } catch (error) { notice('无法连接：' + error.message, true); }
+}
+initialize();

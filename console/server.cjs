@@ -2,7 +2,8 @@
 const http = require('node:http');
 const {timingSafeEqual} = require('node:crypto');
 
-function createManagementServer({controller, token, assets = {}, onExit = () => {}}) {
+function createManagementServer({controller, token, authEnabled = true, assets = {}, onExit = () => {}}) {
+  if (typeof authEnabled !== 'boolean') throw new Error('Management authEnabled must be boolean.');
   if (typeof token !== 'string' || !token.length) throw new Error('Management token is required.');
   const expected = Buffer.from(token);
   let mutations = Promise.resolve();
@@ -23,8 +24,9 @@ function createManagementServer({controller, token, assets = {}, onExit = () => 
       if (req.method === 'GET' && Object.hasOwn(assets, req.url)) {
         const asset = assets[req.url]; res.writeHead(200, {'content-type': asset.type}); res.end(asset.body); return;
       }
+      if (req.url === '/api/auth' && req.method === 'GET') { json(200, {authRequired: authEnabled}); return; }
       const given = Buffer.from(String(req.headers['x-console-token'] || ''));
-      if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
+      if (authEnabled && (given.length !== expected.length || !timingSafeEqual(given, expected))) {
         json(403, {error: 'Open the console again from the application to authenticate.'}); return;
       }
       if (req.url === '/api/state' && req.method === 'GET') { json(200, controller.status()); return; }

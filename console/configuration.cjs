@@ -30,16 +30,17 @@ function validateConfig(value) {
       || value.version !== 1 || !Number.isSafeInteger(value.revision) || value.revision < 0) throw new Error('Invalid configuration version/fields/revision.');
   const web = value.web;
   if (!web || typeof web !== 'object' || Array.isArray(web)
-      || Object.keys(web).some(key => !['port', 'token'].includes(key))
+      || Object.keys(web).some(key => !['port', 'token', 'authEnabled'].includes(key))
+      || Object.hasOwn(web, 'authEnabled') && typeof web.authEnabled !== 'boolean'
       || !Number.isInteger(web.port) || web.port < 1024 || web.port > 65535
       || typeof web.token !== 'string' || !/^[a-fA-F0-9]{64}$/.test(web.token)) {
-    throw new Error('web.port must be 1024-65535; web.token must contain exactly 64 hexadecimal characters.');
+    throw new Error('web.port must be 1024-65535; web.token must contain exactly 64 hexadecimal characters; web.authEnabled must be boolean.');
   }
   const settings = validateSettings(value.settings, value.revision);
   if (settings.port === web.port || Number(new URL(settings.upstream).port || 80) === web.port) {
     throw new Error('Web, filter and upstream ports must differ.');
   }
-  return Object.freeze({version: 1, revision: value.revision, web: Object.freeze({...web}), settings});
+  return Object.freeze({version: 1, revision: value.revision, web: Object.freeze({authEnabled: true, ...web}), settings});
 }
 
 function createConfigStore(filename) {
@@ -49,7 +50,7 @@ function createConfigStore(filename) {
     return {bytes, config: validateConfig(JSON.parse(bytes.replace(/^\uFEFF/, '')))};
   };
   if (!fs.existsSync(filename)) {
-    const config = validateConfig({version: 1, revision: 0, web: {port: 18185, token: randomBytes(32).toString('hex')},
+    const config = validateConfig({version: 1, revision: 0, web: {port: 18185, authEnabled: false, token: randomBytes(32).toString('hex')},
       settings: {client: 'codex', port: 18184, upstream: 'http://127.0.0.1:3425',
         configPath: path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'config.toml'), policy: {enabled: false}}});
     fs.writeFileSync(filename, JSON.stringify(config, null, 2) + '\n', {flag: 'wx', mode: 0o600});

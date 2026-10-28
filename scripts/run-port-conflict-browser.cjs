@@ -32,7 +32,7 @@ async function main() {
     const original = '[model_providers.magpie]\nbase_url="' + upstreamOrigin + '/v1"\n';
     fs.writeFileSync(configPath, original);
     const store = createConfigStore(path.join(runtime, 'MagpieFilter.config.json'));
-    store.save({settings: {...store.current.settings, configPath, upstream: upstreamOrigin, port}}, 0);
+    store.save({web: {...store.current.web, authEnabled: true}, settings: {...store.current.settings, configPath, upstream: upstreamOrigin, port}}, 0);
     const owner = Object.freeze({pid: child.pid, name: '<img src=x onerror="globalThis.pwned=1">',
       executable: 'C:/owned fixture/' + 'long-directory/'.repeat(30) + 'node.exe', started: 'fixture-only'});
     const portOwner = {inspect: async p => {

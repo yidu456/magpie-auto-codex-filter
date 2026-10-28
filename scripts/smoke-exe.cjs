@@ -44,7 +44,7 @@ async function main({executable} = {}) {
   let record, upstreamServer, releaseDelta, savedMetrics;
   const stop = async () => {
     if (!record) return;
-    const headers = {'x-console-token': record.token, 'content-type': 'application/json'};
+    const headers = {'content-type': 'application/json', ...(record.authEnabled !== false ? {'x-console-token': record.token} : {})};
     const state = JSON.parse((await call(record.origin, '/api/state', {method: 'GET', headers})).body);
     return call(record.origin, '/api/exit', {headers, body: JSON.stringify({revision: state.revision})});
   };
@@ -58,6 +58,9 @@ async function main({executable} = {}) {
     assert.equal(fs.readFileSync(configFile, 'utf8'), oldBytes, 'Loading old config must not rewrite it');
     assert.equal(record.origin, 'http://127.0.0.1:' + webPort);
     assert.equal(record.token, oldConfig.web.token);
+    assert.equal(record.authEnabled, true); assert.equal(state.web.activeAuthEnabled, true);
+    assert.deepEqual(JSON.parse((await call(record.origin, '/api/auth', {method: 'GET'})).body), {authRequired: true});
+    assert.equal((await call(record.origin, '/api/state', {method: 'GET'})).status, 403);
     for (const page of ['/', '/?page=settings', '/?page=records', '/?page=help']) {
       const shell = await call(record.origin, page, {method: 'GET'});
       assert.equal(shell.status, 200); assert.match(shell.body, /page-dashboard/);
@@ -188,18 +191,23 @@ async function main({executable} = {}) {
     const copyReservation = http.createServer();
     const copyPort = Number(new URL(await listen(copyReservation)).port); await close(copyReservation);
     const adjacentConfig = path.join(copyDirectory, 'MagpieFilter.config.json');
-    const directBytes = JSON.stringify({...oldConfig, web: {...oldConfig.web, port: copyPort}, settings: {...oldConfig.settings,
+    const directBytes = JSON.stringify({...oldConfig, web: {...oldConfig.web, port: copyPort, authEnabled: false}, settings: {...oldConfig.settings,
       policy: {...oldConfig.settings.policy, bufferResponse: false}}}, null, 2) + '\n';
     fs.writeFileSync(adjacentConfig, directBytes);
     const copied = launch(copiedExe, ['--no-open'], alternateCwd);
     record = await wait(() => { try { return JSON.parse(fs.readFileSync(path.join(copyDirectory, '.magpie-filter/service.json'))); } catch { return null; } });
-    current = JSON.parse((await call(record.origin, '/api/state', {method: 'GET', headers: {'x-console-token': record.token}})).body);
+    assert.equal(record.authEnabled, false); assert.equal(Object.hasOwn(record, 'token'), false);
+    assert.deepEqual(JSON.parse((await call(record.origin, '/api/auth', {method: 'GET'})).body), {authRequired: false});
+    current = JSON.parse((await call(record.origin, '/api/state', {method: 'GET'})).body);
+    assert.equal(current.web.activeAuthEnabled, false); assert.doesNotMatch(JSON.stringify(current), new RegExp(oldConfig.web.token));
     assert.equal(current.configFile, adjacentConfig); assert.equal(current.application.pid, copied.pid);
     assert.equal(current.settings.policy.enabled, false); assert.equal(current.settings.policy.bufferResponse, false);
     assert.equal(current.settings.policy.protectStreamStart, false, 'Old unbuffered stays direct');
     assert.equal(fs.readFileSync(adjacentConfig, 'utf8'), directBytes);
     assert.equal(fs.existsSync(path.join(alternateCwd, 'MagpieFilter.config.json')), false);
     assert.equal(fs.existsSync(path.join(alternateCwd, '.magpie-filter')), false);
+    const copiedDuplicate = launch(copiedExe, ['--no-open'], alternateCwd);
+    await wait(() => exited(copiedDuplicate)); assert.equal(copiedDuplicate.exitCode, 0, copiedDuplicate.output);
     assert.equal((await stop()).status, 200); await wait(() => exited(copied)); assert.equal(copied.exitCode, 0, copied.output); record = null;
     console.log(JSON.stringify({exe, runtime, standaloneStartup: true, embeddedAssets: true, singleInstance: true,
       fixtureFilterAndBypass: true, portableSettings: true, pendingWebRotation: true,

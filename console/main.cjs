@@ -39,14 +39,16 @@ function parseArgs(args) {
 function readJson(file) { try { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); } catch { return null; } }
 function verifyRunning(record, token) {
   return new Promise(resolve => {
+    const authEnabled = record?.authEnabled !== false;
     let url;
     try {
       url = new URL(record?.origin);
       if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !/^\d+$/.test(url.port)
           || url.username || url.password || url.pathname !== '/' || url.search || url.hash
-          || typeof token !== 'string' || !/^[a-fA-F0-9]{64}$/.test(token)) return resolve(false);
+          || Object.hasOwn(record, 'authEnabled') && typeof record.authEnabled !== 'boolean'
+          || authEnabled && (typeof token !== 'string' || !/^[a-fA-F0-9]{64}$/.test(token))) return resolve(false);
     } catch { resolve(false); return; }
-    const req = http.get(url.origin + '/api/state', {headers: {'x-console-token': token}}, res => {
+    const req = http.get(url.origin + '/api/state', {headers: authEnabled ? {'x-console-token': token} : {}}, res => {
       let text = '';
       // Allow 1000 active/200 recent metrics, duplicate policies and 200 bounded log rows.
       res.on('data', chunk => { text += chunk; if (text.length > 8 * 1024 * 1024) { resolve(false); req.destroy(); } });
@@ -62,11 +64,12 @@ function verifyRunning(record, token) {
   });
 }
 async function openConsole(record, token, configFile, stateFile) {
-  try { await openBrowser(record.origin + '/#token=' + token); }
+  const authEnabled = record.authEnabled !== false;
+  try { await openBrowser(record.origin + '/' + (authEnabled ? '#token=' + token : '')); }
   catch {
     const message = 'Cannot open the default browser. The console is still running.\n\nOpen: ' + record.origin
-      + '/\n\nRead the active token field from:\n' + stateFile
-      + '\n\nConfigured web.token (next launch):\n' + configFile;
+      + '/' + (authEnabled ? '\n\nRead the active token field from:\n' + stateFile
+      + '\n\nConfigured web.token (next launch):\n' + configFile : '\n\nLocal management authentication is off.');
     console.error(message);
     showMessage(message);
   }
@@ -94,7 +97,7 @@ async function main(args = process.argv.slice(2)) {
       if (error.code !== 'EEXIST') throw error;
       for (let wait = 0; wait < 40; wait++) {
         const owner = readJson(ownerFile), record = readJson(stateFile);
-        const token = record?.token || readJson(options.configFile)?.web?.token;
+        const token = record?.authEnabled === false ? undefined : record?.token || readJson(options.configFile)?.web?.token;
         if (owner && record?.instance === owner.instance && record.pid === owner.pid && await verifyRunning(record, token)) {
           if (options.open) await openConsole(record, token, options.configFile, stateFile);
           console.log('Console already running at ' + record.origin);
@@ -130,12 +133,12 @@ async function main(args = process.argv.slice(2)) {
     if (fs.existsSync(stateFile) && (previous?.service !== SERVICE || alive(previous.pid))) {
       throw new Error('Existing service ownership cannot be verified. Keep the original runtime and retry after it exits.');
     }
-    const store = createConfigStore(options.configFile), {token, port} = store.current.web;
+    const store = createConfigStore(options.configFile), {token, port, authEnabled} = store.current.web;
     const facade = {status: () => ({...controller.status(), application: {service: SERVICE, pid: process.pid, instance}}),
       update: value => controller.update(value), updateWeb: value => controller.updateWeb(value),
       resolvePortConflict: value => controller.resolvePortConflict(value),
       disconnect: () => controller.disconnect(), close: () => controller.close()};
-    server = createManagementServer({controller: facade, token, assets: loadAssets(), onExit: () => exit().catch(error => console.error(error.message))});
+    server = createManagementServer({controller: facade, token, authEnabled, assets: loadAssets(), onExit: () => exit().catch(error => console.error(error.message))});
     await new Promise((resolve, reject) => {
       server.once('error', reject); server.listen(port, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
     });
@@ -143,7 +146,8 @@ async function main(args = process.argv.slice(2)) {
     controller = createController({runtime, configStore: store});
     await controller.start();
     // Cache the active credential only for relaunch while configured rotation awaits restart.
-    const record = {service: SERVICE, pid: process.pid, instance, origin: 'http://127.0.0.1:' + port, token};
+    const record = {service: SERVICE, pid: process.pid, instance, origin: 'http://127.0.0.1:' + port, authEnabled,
+      ...(authEnabled ? {token} : {})};
     atomicWrite(stateFile, JSON.stringify(record));
     process.on('SIGINT', signal); process.on('SIGTERM', signal);
     if (options.open) await openConsole(record, token, options.configFile, stateFile);

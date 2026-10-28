@@ -10,6 +10,7 @@ test('one portable file initializes once and reloads manually edited web and pol
   const file = path.join(fixture(t), 'MagpieFilter.config.json');
   const store = createConfigStore(file), first = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.equal(first.web.port, 18185);
+  assert.equal(first.web.authEnabled, false);
   assert.match(first.web.token, /^[a-f0-9]{64}$/);
   assert.equal(first.settings.policy.enabled, false);
   assert.equal(first.settings.policy.bufferResponse, true);
@@ -36,11 +37,29 @@ test('version1 saved direct policies load protection OFF without rewriting bytes
         bufferResponse: false, heartbeat: true, revision: 2}}};
   const bytes = '\uFEFF' + JSON.stringify(old, null, 4) + '\r\n';
   fs.writeFileSync(file, bytes);
-  const policy = createConfigStore(file).current.settings.policy;
+  const loaded = createConfigStore(file).current, policy = loaded.settings.policy;
+  assert.equal(loaded.web.authEnabled, true);
   assert.equal(policy.protectStreamStart, false);
   assert.equal(policy.bufferResponse, false);
   assert.equal(policy.enabled, false);
   assert.equal(fs.readFileSync(file, 'utf8'), bytes);
+});
+
+test('management auth accepts explicit booleans only and preserves invalid config bytes', t => {
+  const {createConfigStore} = require('./configuration.cjs');
+  const file = path.join(fixture(t), 'auth.config.json'), defaults = createConfigStore(file).current;
+  for (const authEnabled of [true, false]) {
+    const bytes = JSON.stringify({...defaults, web: {...defaults.web, authEnabled}});
+    fs.writeFileSync(file, bytes);
+    assert.equal(createConfigStore(file).current.web.authEnabled, authEnabled);
+    assert.equal(fs.readFileSync(file, 'utf8'), bytes);
+  }
+  for (const authEnabled of [null, 0, 1, 'false', {}, []]) {
+    const bytes = JSON.stringify({...defaults, web: {...defaults.web, authEnabled}});
+    fs.writeFileSync(file, bytes);
+    assert.throws(() => createConfigStore(file), /authEnabled/);
+    assert.equal(fs.readFileSync(file, 'utf8'), bytes);
+  }
 });
 
 test('config rejects invalid JSON, weak token and conflicting ports without replacing user files', t => {
