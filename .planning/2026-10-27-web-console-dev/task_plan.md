@@ -4,7 +4,7 @@
 Preserve the completed dev console and adapt selected V11 capabilities on dev-2, with a verified commit per step.
 
 ## Next Step
-Execute approved Phase13 plan: safe port-owner adapter, explicit controller/UI consent, native packages, gated GitHub release workflow, final acceptance. No remote publishing or real-user process termination.
+Phase13 Tasks1-3 reviewed complete. Implement Task6 optional auth, Task8 forced disconnect, Task7 app identity/final rebuild, then Task4 release workflow and Task5 acceptance. No remote publishing or real-user process termination.
 
 ## Current Phase
 Phase 13
