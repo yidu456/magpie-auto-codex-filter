@@ -5,7 +5,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {spawn} = require('node:child_process');
 const http = require('node:http');
+const vm = require('node:vm');
 const {fixture, call, listen, close} = require('../magpie-auto-codex-filter/test-support.cjs');
+const {createRecorder} = require('./metrics.cjs');
+
+const verifierContext = {module: {exports: {}}, __dirname, require, process, URL, Buffer};
+vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'main.cjs'), 'utf8')
+  + '\nmodule.exports = verifyRunning;', verifierContext);
+const verifyRunning = verifierContext.module.exports;
 
 async function portableFixture(t) {
   const runtime = fixture(t), reservation = http.createServer();
@@ -38,6 +45,66 @@ async function quit(record) {
   const state = JSON.parse((await call(record.origin, '/api/state', {method: 'GET', headers})).body);
   return call(record.origin, '/api/exit', {headers, body: JSON.stringify({revision: state.revision})});
 }
+
+test('singleton verifier accepts saturated bounded metrics and log metadata', async t => {
+  let now = new Date(2026, 9, 28, 9).getTime();
+  const recorder = createRecorder({now: () => now}), max = Number.MAX_SAFE_INTEGER;
+  for (let i = 0; i < 1200; i++) {
+    if (i < 180) now += 60000;
+    const requestId = String(i).padStart(100, 'x');
+    recorder.observe('request-started', {requestId, enabled: true, policyRevision: max,
+      model: (String(i) + '"'.repeat(120)).slice(0, 120), streaming: true});
+    recorder.observe('forwarded', {requestId, status: 599, ttfbMs: max});
+    recorder.observe('response-usage', {requestId, usage: {input_tokens: max, output_tokens: max,
+      total_tokens: max, input_tokens_details: {cached_tokens: max}}});
+    for (const kind of ['resource', 'rateLimit', 'transport', 'availability', 'local', 'other']) {
+      recorder.observe('retry-scheduled', {requestId, delayMs: max});
+      recorder.observe('retry-dispatched', {requestId, kind});
+    }
+    recorder.observe('http-error', {requestId, errorCode: String(i).padStart(160, 'e'), kind: 'availability'});
+    if (i < 200) recorder.observe('request-finished', {requestId, outcome: 'success', durationMs: max});
+  }
+  const metrics = recorder.snapshot();
+  assert.equal(metrics.recent.length, 200); assert.equal(metrics.active.length, 1000);
+  assert.equal(metrics.series.length, 180);
+  const controller = require('./controller.cjs').createController({runtime: fixture(t)});
+  t.after(() => controller.close());
+  const application = {service: 'magpie-filter-console-v1', pid: process.pid, instance: 'ab'.repeat(16)};
+  // Include all allowed log fields at their escaped-string bounds, not just today's event shapes.
+  const logRow = {id: max, time: new Date(now).toISOString(), event: 'request-metadata'};
+  for (const key of ['requestId', 'policyRevision', 'cleanup', 'enabled', 'state', 'handler', 'kind', 'errorCode',
+    'code', 'retry', 'retries', 'delayMs', 'durationMs', 'outcome', 'phase', 'elapsedMs', 'removed', 'removedItemIds', 'status']) {
+    logRow[key] = ['errorCode', 'code'].includes(key) ? 'e'.repeat(160) : '"'.repeat(160);
+  }
+  const state = {...controller.status(), metrics, application, events: Array.from({length: 200}, () => ({...logRow})),
+    activePolicies: metrics.active.map(({requestId, policyRevision}) => ({requestId, policyRevision}))};
+  t.diagnostic('Bounded state characters: ' + JSON.stringify(state).length + '; metrics: ' + JSON.stringify(metrics).length);
+  assert.ok(JSON.stringify(state).length > 2 * 1024 * 1024);
+  const token = 'cd'.repeat(32), server = require('./server.cjs').createManagementServer({token, controller: {status: () => state}});
+  t.after(() => close(server));
+  const origin = await listen(server);
+  assert.equal(await verifyRunning({origin, ...application}, token), true);
+  assert.equal(await verifyRunning({origin, ...application}, 'ef'.repeat(32)), false);
+});
+
+test('singleton verifier still rejects oversized, malformed and mismatched responses', async t => {
+  const application = {service: 'magpie-filter-console-v1', pid: process.pid, instance: 'ab'.repeat(16)};
+  let status = 200, text = '';
+  const server = http.createServer((req, res) => { res.writeHead(status); res.end(text); });
+  t.after(() => close(server));
+  const record = {origin: await listen(server), ...application}, token = 'cd'.repeat(32);
+  for (const [name, code, body] of [
+    ['oversized', 200, JSON.stringify({padding: 'x'.repeat(4 * 1024 * 1024), application})],
+    ['malformed', 200, '{'],
+    ['wrong status', 503, JSON.stringify({application})],
+    ['wrong service', 200, JSON.stringify({application: {...application, service: 'other'}})],
+    ['wrong instance', 200, JSON.stringify({application: {...application, instance: 'ef'.repeat(16)}})],
+    ['wrong pid', 200, JSON.stringify({application: {...application, pid: process.pid + 1}})]
+  ]) {
+    status = code; text = body;
+    assert.equal(await verifyRunning(record, token), false, name);
+  }
+});
 
 test('launcher is single-instance, inert by default and exits through authenticated API', async t => {
   const children = []; let record;

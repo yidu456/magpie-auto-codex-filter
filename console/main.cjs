@@ -48,7 +48,8 @@ function verifyRunning(record, token) {
     } catch { resolve(false); return; }
     const req = http.get(url.origin + '/api/state', {headers: {'x-console-token': token}}, res => {
       let text = '';
-      res.on('data', chunk => { text += chunk; if (text.length > 512 * 1024) req.destroy(); });
+      // Allow 1000 active/200 recent metrics, duplicate policies and 200 bounded log rows.
+      res.on('data', chunk => { text += chunk; if (text.length > 4 * 1024 * 1024) { resolve(false); req.destroy(); } });
       res.on('error', () => resolve(false));
       res.on('end', () => {
         try {
