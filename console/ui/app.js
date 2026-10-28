@@ -234,6 +234,7 @@ function render() {
   if (!webDirty) { $('web-port').value = state.web.port; $('web-auth-enabled').checked = state.web.authEnabled; }
   $('web-token-field').hidden = !$('web-auth-enabled').checked;
   for (const input of document.querySelectorAll('#web-form input, #web-form button')) input.disabled = working;
+  $('web-token').disabled = working || $('web-token-field').hidden;
   $('web-hint').textContent = state.web.restartRequired
     ? '已保存，重启本程序后生效。当前地址：' + location.origin + '；下次地址：http://127.0.0.1:' + state.web.port + '/。退出后再双击 EXE。'
     : '当前地址：' + location.origin + '/。网页端口默认 18185，与过滤端口分开。';
@@ -352,12 +353,15 @@ $('connection-form').addEventListener('submit', async event => {
   }
   render();
 });
-$('web-form').addEventListener('input', () => { webDirty = true; $('web-token-field').hidden = !$('web-auth-enabled').checked; });
+$('web-form').addEventListener('input', () => {
+  webDirty = true; $('web-token-field').hidden = !$('web-auth-enabled').checked;
+  $('web-token').disabled = $('web-token-field').hidden;
+});
 $('web-form').addEventListener('submit', async event => {
   event.preventDefault();
   if (busy || !state || !$('web-form').reportValidity()) return;
   const web = {port: Number($('web-port').value), authEnabled: $('web-auth-enabled').checked};
-  if ($('web-token').value.trim()) web.token = $('web-token').value.trim();
+  if (!$('web-token').disabled && $('web-token').value.trim()) web.token = $('web-token').value.trim();
   busy = true; render();
   try {
     state = await api('/api/web', {revision: state.revision, web});
@@ -421,7 +425,7 @@ async function initialize() {
         state = await api('/api/state'); sessionStorage.setItem('console-token', token); render();
       }
     } else { sessionStorage.removeItem('console-token'); $('login').hidden = true; }
-    refresh();
   } catch (error) { notice('无法连接：' + error.message, true); }
+  finally { if (authRequired !== null) refresh(); }
 }
 initialize();

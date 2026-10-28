@@ -90,14 +90,38 @@ async function main({executable} = {}) {
     let child = await restart(fixture.child); assert.equal(record.authEnabled, true); assert.equal(record.token, 'cd'.repeat(32));
     assert.equal((await call(fixture.origin, '/api/state', {method: 'GET'})).status, 403);
     // New context has no stale fixture initialization; protected flow supports manual and fragment login.
-    await page.goto(fixture.origin + '/'); await page.locator('#login').waitFor({state: 'visible'});
+    await page.goto(fixture.origin + '/#token=' + 'ab'.repeat(32)); await page.locator('#login').waitFor({state: 'visible'});
     await page.locator('#login-token').fill('ab'.repeat(32)); await page.locator('#login-submit').click();
     await page.waitForFunction(() => document.getElementById('notice').textContent.includes('令牌无效'));
     await page.locator('#login-token').fill(record.token); await page.locator('#login-submit').click(); await page.locator('#controls').waitFor({state: 'visible'});
+    const loginRevision = (await state()).revision;
+    await page.route('**/api/state', async route => {
+      const response = await route.fetch(), next = await response.json();
+      next.metrics.totals.started = 17;
+      await route.fulfill({response, json: next});
+    });
+    await page.waitForFunction(() => document.getElementById('daily-started').textContent === '17');
+    assert.equal((await state()).revision, loginRevision, 'Metrics must refresh without a settings revision change');
+    current = await state();
+    const otherTab = await call(fixture.origin, '/api/settings', {headers: headers(), body: JSON.stringify({revision: current.revision,
+      settings: {...current.settings, policy: {...current.settings.policy, cleanup: 'never'}}})});
+    assert.equal(otherTab.status, 200, otherTab.body);
+    await page.waitForFunction(revision => document.getElementById('revision').textContent.includes(String(revision)), loginRevision + 1);
+    await page.unroute('**/api/state');
     await fourPages(true); await page.setViewportSize({width: 390, height: 844}); await fourPages(true);
     await page.goto(fixture.origin + '/?page=settings#token=' + record.token); await page.locator('#controls').waitFor({state: 'visible'});
     assert.equal(new URL(page.url()).hash, '');
-    await saveAuth(false, 'ef'.repeat(32)); assert.equal((await state()).web.activeAuthEnabled, true);
+    await page.locator('#web-token').fill('short');
+    assert.equal(await page.locator('#web-token').evaluate(el => el.validity.patternMismatch), true);
+    await page.locator('#web-auth-enabled').uncheck();
+    const beforeHiddenSave = (await state()).revision;
+    const hiddenSave = page.waitForRequest(request => new URL(request.url()).pathname === '/api/web' && request.method() === 'POST');
+    await page.locator('#save-web').click();
+    const hiddenBody = (await hiddenSave).postDataJSON();
+    assert.equal(Object.hasOwn(hiddenBody.web, 'token'), false, 'Hidden draft must not be submitted');
+    await page.waitForFunction(revision => document.getElementById('revision').textContent.includes(String(revision)), beforeHiddenSave + 1);
+    assert.equal((await state()).web.authEnabled, false); assert.equal((await state()).web.activeAuthEnabled, true);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(fixture.runtime, 'MagpieFilter.config.json'))).web.token, record.token);
     assert.equal((await call(fixture.origin, '/api/state', {method: 'GET'})).status, 403);
     assert.equal((await call(fixture.origin, '/api/state', {method: 'GET', headers: {'x-console-token': 'ef'.repeat(32)}})).status, 403);
     await duplicate(); child = await restart(child);
@@ -106,7 +130,8 @@ async function main({executable} = {}) {
     current = await state(); assert.equal(current.web.restartRequired, false); assert.doesNotMatch(JSON.stringify(current), /(?:ab|cd|ef){32}/);
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({optionalAuth: true, defaultOffFourPagesDesktopMobile: true, noOffCredential: true, off403NoLoginLoop: true,
-      oneUseConsentOff: true, enableDisableRealRestarts: true, protectedLoginFourPages: true, pendingRotationSingleton: true, pageErrors: errors}));
+      oneUseConsentOff: true, enableDisableRealRestarts: true, protectedLoginFourPages: true, pendingRotationSingleton: true,
+      staleFragmentManualLoginPolling: true, sameRevisionMetricsAndOtherTabPolling: true, hiddenInvalidTokenDoesNotBlockSave: true, pageErrors: errors}));
   } catch (error) { failure = error; }
   finally {
     const cleanup = async work => { try { await work(); } catch (error) { failure ||= error; } };
