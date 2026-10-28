@@ -25,6 +25,8 @@ test('management enforces token, origin, host, request size and route boundaries
   assert.equal((await request('/api/settings', {method: 'POST', body: 'x'.repeat(33000)})).status, 413);
   assert.equal((await request('/api/settings', {method: 'POST', body: '{'})).status, 400);
   const data = JSON.parse(state.body);
+  assert.equal(data.metrics.totals.started, 0);
+  assert.equal(data.diagnostics.logs.closed, false);
   const save = await request('/api/settings', {method: 'POST', body: JSON.stringify({revision: data.revision,
     settings: {...data.settings, policy: {...data.settings.policy, handlers: {...data.settings.policy.handlers, rateLimit: false}}}})});
   assert.equal(save.status, 200);

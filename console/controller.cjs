@@ -8,6 +8,8 @@ const {ConfigRouter, magpieEntries} = require('../magpie-auto-codex-filter/confi
 const {atomicWrite, sameEndpoint} = require('../magpie-auto-codex-filter/base-config.cjs');
 
 const {createConfigStore, validateSettings} = require('./configuration.cjs');
+const {createRecorder, MAX_SAVED_BYTES} = require('./metrics.cjs');
+const {createLogWriter} = require('./log-writer.cjs');
 
 function createController({runtime, configStore}) {
   runtime = path.resolve(runtime);
@@ -17,30 +19,48 @@ function createController({runtime, configStore}) {
   let revision = store.current.revision, settings = store.current.settings;
   const activeWeb = store.current.web;
   let proxy, router, connection, timer, transitioning = false, closed = false, lastError = null;
-  let queue = Promise.resolve(), sequence = 0, logBytes = 0;
-  const events = [], activePolicies = new Map();
+  let queue = Promise.resolve(), sequence = 0, proxySequence = 0, metricsSave = null;
+  const events = [], recorder = createRecorder(), writer = createLogWriter(file('console.log'));
+  const instance = randomBytes(8).toString('hex');
+  const persistence = {loadError: null, writeErrors: 0, lastError: null, lastSavedAt: null, timerActive: true};
+  try {
+    if (fs.existsSync(file('metrics.json'))) {
+      if (fs.statSync(file('metrics.json')).size > MAX_SAVED_BYTES) persistence.loadError = 'SNAPSHOT_TOO_LARGE';
+      else if (!recorder.hydrate(JSON.parse(fs.readFileSync(file('metrics.json'), 'utf8')))) persistence.loadError = 'INVALID_OR_STALE_SNAPSHOT';
+    }
+  } catch { persistence.loadError = 'INVALID_SNAPSHOT'; }
+  const saveMetrics = () => {
+    if (metricsSave) return metricsSave;
+    metricsSave = (async () => {
+      const temp = file('metrics.json.' + randomBytes(8).toString('hex') + '.tmp');
+      try {
+        const text = JSON.stringify(recorder.serialize());
+        if (Buffer.byteLength(text) > MAX_SAVED_BYTES) throw Object.assign(new Error(), {code: 'SNAPSHOT_TOO_LARGE'});
+        await fs.promises.writeFile(temp, text, {flag: 'wx', mode: 0o600});
+        await fs.promises.rename(temp, file('metrics.json'));
+        persistence.lastSavedAt = new Date().toISOString(); persistence.lastError = null;
+      } catch (error) {
+        persistence.writeErrors++;
+        persistence.lastError = /^[A-Z0-9_]{1,40}$/.test(error.code || '') ? error.code : 'IO_ERROR';
+      } finally { await fs.promises.unlink(temp).catch(() => {}); }
+    })().finally(() => { metricsSave = null; });
+    return metricsSave;
+  };
+  const metricsTimer = setInterval(saveMetrics, 60000); metricsTimer.unref();
   const log = (event, data = {}) => {
     const row = {id: ++sequence, time: new Date().toISOString(), event};
     // No request bodies, auth headers or full client configuration enter this log.
     for (const key of ['requestId', 'policyRevision', 'cleanup', 'enabled', 'state', 'handler', 'kind', 'errorCode',
       'code', 'retry', 'retries', 'delayMs', 'durationMs', 'outcome', 'phase', 'elapsedMs', 'removed', 'removedItemIds', 'status']) {
-      if (typeof data[key] === 'string') row[key] = data[key].slice(0, 160);
-      else if (typeof data[key] === 'number' || typeof data[key] === 'boolean') row[key] = data[key];
+      if (typeof data[key] === 'string' && data[key].length <= 160 && !/[\x00-\x1f\x7f]/.test(data[key])) {
+        if (['errorCode', 'code'].includes(key) && !/^[a-zA-Z0-9_.:-]+$/.test(data[key])) continue;
+        row[key] = data[key];
+      } else if ((typeof data[key] === 'number' && Number.isFinite(data[key]) && data[key] >= 0)
+        || typeof data[key] === 'boolean') row[key] = data[key];
     }
     events.push(row);
     if (events.length > 200) events.shift();
-    if (event === 'request-started') activePolicies.set(data.requestId, data.policyRevision);
-    if (event === 'request-finished') activePolicies.delete(data.requestId);
-    try {
-      const line = JSON.stringify(row) + '\n';
-      if (logBytes === 0 && fs.existsSync(file('console.log'))) logBytes = fs.statSync(file('console.log')).size;
-      if (logBytes > 1024 * 1024) {
-        const tail = fs.readFileSync(file('console.log'), 'utf8').slice(-512 * 1024);
-        atomicWrite(file('console.log'), tail.slice(tail.indexOf('\n') + 1));
-        logBytes = fs.statSync(file('console.log')).size;
-      }
-      fs.appendFileSync(file('console.log'), line, {mode: 0o600}); logBytes += Buffer.byteLength(line);
-    } catch { /* Logging failure must not abort a model request or restoration. */ }
+    writer.write(JSON.stringify(row) + '\n');
   };
   const persist = (next, nextRevision) => store.save({settings: next}, nextRevision);
   const makeRouter = c => new ConfigRouter({configPath: c.configPath, backupPath: file('routes.json'),
@@ -74,15 +94,19 @@ function createController({runtime, configStore}) {
       log('recovered');
     } catch (error) { lastError = error.message; }
   }
-  const status = () => ({revision, settings, configFile: store.filename,
+  const status = () => {
+    const metrics = recorder.snapshot();
+    return {revision, settings, configFile: store.filename,
     web: {port: store.current.web.port, activePort: activeWeb.port,
       restartRequired: store.current.web.port !== activeWeb.port || store.current.web.token !== activeWeb.token},
     connected: !!proxy?.listening,
     attached: router?.state === 'filtering', state: closed ? 'closed' : lastError ? 'needs-attention' : router?.state || 'idle',
     lastError, connection: connection ? {...connection} : null,
     stats: {...(proxy?.stats || {requests: 0, activeRequests: 0})},
-    activePolicies: [...activePolicies].map(([requestId, policyRevision]) => ({requestId, policyRevision})),
-    events: events.map(row => ({...row}))});
+    activePolicies: metrics.active.map(({requestId, policyRevision}) => ({requestId, policyRevision})),
+    events: events.map(row => ({...row})), metrics,
+    diagnostics: {logs: writer.diagnostics, persistence: {...persistence}}};
+  };
   const serial = fn => {
     const result = queue.then(fn);
     queue = result.catch(() => {});
@@ -123,11 +147,17 @@ function createController({runtime, configStore}) {
         };
         checkUnowned();
         const candidateRouter = makeRouter(candidate);
+        const namespace = instance + ':' + ++proxySequence + ':';
+        const namespaced = data => Number.isSafeInteger(data?.requestId) && data.requestId >= 0
+          ? {...data, requestId: namespace + data.requestId} : data;
         const server = makeProxy({mode: 'magpie-auto', token: randomBytes(32).toString('hex'),
           getUpstream: () => candidate.upstream, getPolicy: () => {
             if (transitioning || closed) throw new FilterError('configuration_transition', 'Connection is changing; retry shortly.', 503);
             return settings.policy;
-          }, log});
+          }, log: (event, data) => log(event, namespaced(data)), observe: (event, data) => {
+            try { recorder.observe(event, namespaced(data)); }
+            catch { /* Optional recording cannot affect forwarding or restoration. */ }
+          }});
         await new Promise((resolve, reject) => {
           server.once('error', reject); server.listen(next.port, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
         });
@@ -200,6 +230,9 @@ function createController({runtime, configStore}) {
     disconnect: () => serial(() => disconnectInternal()), close: () => serial(async () => {
     if (closed) return;
     await disconnectInternal(true); closed = true;
+    clearInterval(metricsTimer); persistence.timerActive = false;
+    if (metricsSave) await metricsSave;
+    await saveMetrics(); await writer.close();
   })};
 }
 

@@ -22,7 +22,7 @@ async function setup(t) {
   fs.writeFileSync(configPath, original);
   controller = createController({runtime});
   const settings = {...controller.status().settings, configPath, upstream, port};
-  return {runtime, configPath, original, controller, settings, origin: 'http://127.0.0.1:' + port};
+  return {runtime, configPath, original, controller, settings, up, origin: 'http://127.0.0.1:' + port};
 }
 
 test('console starts inert, attaches on enable, bypasses on disable, restores on disconnect', async t => {
@@ -220,4 +220,105 @@ test('disconnect refuses active uploads and failed restoration keeps the proxy a
   assert.equal(fs.readFileSync(h.configPath, 'utf8'), attached);
   await c.disconnect();
   assert.equal(fs.readFileSync(h.configPath, 'utf8'), h.original);
+});
+
+test('metrics retain namespaced lifecycles across reconnect, observed tokens and independent revisions', async t => {
+  const h = await setup(t), c = h.controller;
+  h.up.removeAllListeners('request');
+  h.up.on('request', (req, res) => {
+    req.resume(); req.on('end', () => {
+      res.setHeader('content-type', 'text/event-stream');
+      res.end('event: response.completed\ndata: ' + JSON.stringify({type: 'response.completed', response: {
+        usage: {input_tokens: 12, output_tokens: 3, total_tokens: 15, input_tokens_details: {cached_tokens: 4}},
+        output: [{text: 'secret-output'}]}}) + '\n\n');
+    });
+  });
+  const send = () => call(h.origin, '/v1/responses', {body: JSON.stringify({model: 'mock', stream: true,
+    input: [{role: 'user', content: 'secret-prompt'}]}), headers: {authorization: 'Bearer secret-credential', connection: 'close'}});
+  await c.update({revision: 0, settings: {...h.settings, policy: {...h.settings.policy, enabled: true}}});
+  let revision = c.status().revision;
+  assert.equal((await send()).status, 200);
+  assert.equal(c.status().revision, revision);
+  assert.equal(c.status().metrics.totals.success, 1);
+  assert.equal(c.status().metrics.totals.inputTokens, 12);
+  await c.disconnect();
+  await c.update({revision: c.status().revision, settings: {...c.status().settings, policy: {...c.status().settings.policy, enabled: true}}});
+  revision = c.status().revision; await send();
+  const state = c.status(); assert.equal(state.revision, revision);
+  assert.equal(state.metrics.totals.success, 2); assert.equal(state.metrics.totals.inputTokens, 24);
+  assert.equal(state.metrics.recent.length, 2);
+  assert.notEqual(state.metrics.recent[0].requestId, state.metrics.recent[1].requestId);
+  assert.equal(state.activePolicies.length, 0);
+  await c.close();
+  const persisted = fs.readFileSync(path.join(h.runtime, 'metrics.json'), 'utf8');
+  assert.doesNotMatch(persisted, /secret-prompt|secret-output|secret-credential/);
+  assert.doesNotMatch(fs.readFileSync(path.join(h.runtime, 'console.log'), 'utf8'), /secret-prompt|secret-output|secret-credential/);
+  const loaded = require('./controller.cjs').createController({runtime: h.runtime});
+  t.after(() => loaded.close());
+  assert.equal(loaded.status().metrics.totals.success, 2);
+  assert.equal(loaded.status().metrics.active.length, 0);
+});
+
+test('minute persistence is atomic, independent of revision and stops on normal close', async t => {
+  const runtime = fixture(t);
+  t.mock.timers.enable({apis: ['setInterval']});
+  const c = require('./controller.cjs').createController({runtime});
+  t.after(() => c.close());
+  const file = path.join(runtime, 'metrics.json');
+  assert.equal(fs.existsSync(file), false);
+  t.mock.timers.tick(60000);
+  for (let i = 0; i < 200 && !fs.existsSync(file); i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).version, 1);
+  assert.equal(c.status().revision, 0);
+  await c.close(); const text = fs.readFileSync(file, 'utf8');
+  t.mock.timers.tick(120000); await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(fs.readFileSync(file, 'utf8'), text);
+  assert.equal(c.status().diagnostics.logs.closed, true);
+  assert.equal(c.status().diagnostics.persistence.timerActive, false);
+  assert.deepEqual(fs.readdirSync(runtime).filter(name => name.endsWith('.tmp')), []);
+});
+
+test('corrupt and oversize metrics never block startup and I/O failures stay diagnostic', async t => {
+  const runtime = fixture(t), filename = path.join(runtime, 'metrics.json');
+  fs.writeFileSync(filename, '{bad secret');
+  const c = require('./controller.cjs').createController({runtime});
+  t.after(() => c.close()); await c.start();
+  assert.equal(c.status().state, 'idle'); assert.equal(c.status().metrics.totals.started, 0);
+  assert.equal(c.status().diagnostics.persistence.loadError, 'INVALID_SNAPSHOT');
+  assert.doesNotMatch(JSON.stringify(c.status().diagnostics), /secret/);
+  fs.unlinkSync(filename); fs.mkdirSync(filename);
+  await assert.doesNotReject(c.close());
+  assert.equal(c.status().diagnostics.persistence.writeErrors, 1);
+  fs.rmdirSync(filename); fs.writeFileSync(filename, ' '.repeat(1024 * 1024 + 1));
+  const second = require('./controller.cjs').createController({runtime});
+  t.after(() => second.close()); assert.equal(second.status().diagnostics.persistence.loadError, 'SNAPSHOT_TOO_LARGE');
+});
+
+test('failed safe restore leaves persistence timer and log writer usable until close is retried', async t => {
+  const h = await setup(t), c = h.controller;
+  await c.update({revision: 0, settings: {...h.settings, policy: {...h.settings.policy, enabled: true}}});
+  const attached = fs.readFileSync(h.configPath, 'utf8');
+  fs.writeFileSync(h.configPath, attached.replace('/magpie/v1', '/edited/v1'));
+  try {
+    await assert.rejects(c.close(), /still.*filter|restore/i);
+    assert.equal(c.status().connected, true);
+    assert.equal(c.status().diagnostics.logs.closed, false);
+    assert.equal(c.status().diagnostics.persistence.timerActive, true);
+    assert.equal((await call(h.origin, '/v1/responses', {body: '{}'})).status, 200);
+    assert.equal(c.status().metrics.totals.success, 1);
+  } finally { fs.writeFileSync(h.configPath, attached); }
+  await c.close(); assert.equal(c.status().diagnostics.logs.closed, true);
+});
+
+test('metrics hydration and close never rewrite a legacy BOM CRLF configuration', async t => {
+  const runtime = fixture(t), file = path.join(runtime, 'MagpieFilter.config.json');
+  const seed = require('./controller.cjs').createController({runtime}); await seed.close();
+  const config = JSON.parse(fs.readFileSync(file, 'utf8'));
+  delete config.settings.policy.protectStreamStart;
+  const original = '\uFEFF' + JSON.stringify(config, null, 2).replace(/\n/g, '\r\n') + '\r\n';
+  fs.writeFileSync(file, original);
+  const c = require('./controller.cjs').createController({runtime}); t.after(() => c.close());
+  assert.equal(c.status().settings.policy.protectStreamStart, false);
+  await c.start(); await c.close();
+  assert.equal(fs.readFileSync(file, 'utf8'), original);
 });
