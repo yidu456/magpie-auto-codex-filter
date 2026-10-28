@@ -26,6 +26,14 @@
       </form>
     </section>
     <div id="controls" hidden>
+    <dialog id="port-conflict-dialog" aria-labelledby="port-conflict-title" aria-describedby="port-conflict-warning port-conflict-reason">
+      <h2 id="port-conflict-title">过滤端口已被占用</h2>
+      <p id="port-conflict-warning" class="warning">强制结束占用进程可能丢失未保存的工作。只结束此进程，不结束其子进程。是否结束它并开启过滤？</p>
+      <p id="port-conflict-details"></p>
+      <p id="port-conflict-reason"></p>
+      <p id="port-conflict-progress" role="status" aria-live="polite"></p>
+      <div class="actions"><button id="port-conflict-no" type="button" class="secondary" autofocus>否，保留进程</button><button id="port-conflict-yes" type="button">是，结束并开启</button></div>
+    </dialog>
     <div id="page-dashboard">
     <section class="master" aria-labelledby="master-title">
       <div class="master-copy"><div class="master-heading"><span id="core-lamp" class="lamp"></span><h2 id="master-title">核心过滤</h2><span id="core-state">关闭</span></div><p id="core-description">关闭时不清理、不重试、不暂存；已接入的请求直通 Magpie。</p></div>
@@ -59,6 +67,7 @@
           <label class="config-field">Codex 配置文件<input id="config-path" name="configPath" required spellcheck="false" placeholder="C:\Users\…\.codex\config.toml"></label>
         </div>
         <div class="form-footer"><span id="connection-hint">默认过滤端口 18184，可更改。先断开再改端口，重新接入后重启 Codex。</span><div class="actions"><button id="disconnect" type="button" class="secondary" disabled>断开并恢复</button><button id="save-connection" type="submit" disabled>保存接入设置</button></div></div>
+        <button id="resolve-port" type="button" class="secondary" hidden>处理端口占用 / 重试接入</button>
       </form>
     </section>
     <section class="panel" aria-labelledby="web-title">

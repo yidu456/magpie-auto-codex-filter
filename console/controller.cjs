@@ -10,8 +10,9 @@ const {atomicWrite, sameEndpoint} = require('../magpie-auto-codex-filter/base-co
 const {createConfigStore, validateSettings} = require('./configuration.cjs');
 const {createRecorder, MAX_SAVED_BYTES} = require('./metrics.cjs');
 const {createLogWriter} = require('./log-writer.cjs');
+const {createPortOwner} = require('./port-owner.cjs');
 
-function createController({runtime, configStore}) {
+function createController({runtime, configStore, portOwner = createPortOwner()}) {
   runtime = path.resolve(runtime);
   fs.mkdirSync(runtime, {recursive: true});
   const file = name => path.join(runtime, name);
@@ -19,6 +20,7 @@ function createController({runtime, configStore}) {
   let revision = store.current.revision, settings = store.current.settings;
   const activeWeb = store.current.web;
   let proxy, router, connection, timer, transitioning = false, closed = false, lastError = null;
+  let consent = null, portConflictPending = false;
   let queue = Promise.resolve(), sequence = 0, proxySequence = 0, metricsSave = null;
   const events = [], recorder = createRecorder(), writer = createLogWriter(file('console.log'));
   const instance = randomBytes(8).toString('hex');
@@ -94,6 +96,22 @@ function createController({runtime, configStore}) {
       log('recovered');
     } catch (error) { lastError = error.message; }
   }
+  const currentConflict = () => {
+    if (consent && performance.now() >= consent.deadline) consent = null;
+    return consent?.public || null;
+  };
+  const offerConflict = (next, metadata, code = 'PORT_CONFLICT') => {
+    const challenge = randomBytes(32).toString('hex');
+    const conflict = {port: next.port, owner: metadata.owner ? {
+      pid: metadata.owner.pid, name: metadata.owner.name, executable: metadata.owner.executable
+    } : null, canTerminate: metadata.canTerminate, reason: metadata.reason,
+    revision, challenge, expiresAt: Date.now() + 60000};
+    // The original frozen owner is an adapter-local capability; never clone it for termination.
+    consent = {settings: next, owner: metadata.owner, deadline: performance.now() + 60000, public: conflict};
+    lastError = code === 'PORT_CONFLICT' ? 'EADDRINUSE: filter port is occupied. Explicit confirmation is required.'
+      : 'Port owner changed. Review the new owner before confirming.';
+    return Object.assign(new Error(lastError), {code, conflict});
+  };
   const status = () => {
     const metrics = recorder.snapshot();
     return {revision, settings, configFile: store.filename,
@@ -101,7 +119,7 @@ function createController({runtime, configStore}) {
       restartRequired: store.current.web.port !== activeWeb.port || store.current.web.token !== activeWeb.token},
     connected: !!proxy?.listening,
     attached: router?.state === 'filtering', state: closed ? 'closed' : lastError ? 'needs-attention' : router?.state || 'idle',
-    lastError, connection: connection ? {...connection} : null,
+    lastError, transitioning, portConflictPending, portConflict: currentConflict(), connection: connection ? {...connection} : null,
     stats: {...(proxy?.stats || {requests: 0, activeRequests: 0})},
     activePolicies: metrics.active.map(({requestId, policyRevision}) => ({requestId, policyRevision})),
     events: events.map(row => ({...row})), metrics,
@@ -112,12 +130,13 @@ function createController({runtime, configStore}) {
     queue = result.catch(() => {});
     return result;
   };
+  const mutate = fn => { consent = null; return serial(() => { consent = null; return fn(); }); };
   const stopListener = async () => {
     clearInterval(timer);
     if (proxy?.listening) await new Promise(resolve => { proxy.close(resolve); proxy.closeIdleConnections(); });
     proxy = null;
   };
-  const apply = async ({revision: expected, settings: value, ...extra} = {}, startup = false) => {
+  const validateUpdate = ({revision: expected, settings: value, ...extra} = {}, startup = false) => {
     if (closed) throw new Error('Console is closed.');
     if (Object.keys(extra).length) throw new Error('Invalid update fields.');
     if (expected !== revision) throw new Error('Settings changed in another tab. Reload before saving (revision conflict).');
@@ -129,23 +148,27 @@ function createController({runtime, configStore}) {
     if (connection && ['configPath', 'upstream', 'port'].some(key => connection[key] !== next[key])) {
       throw new Error('Disconnect and restore the current connection before changing endpoints.');
     }
-    if (lastError && !proxy && (connection || fs.existsSync(file('connection.json')))) {
-      throw new Error('Resolve recovery first using Disconnect: ' + lastError);
+    if (!proxy && (connection || fs.existsSync(file('connection.json')))) {
+      throw new Error('Resolve recovery first using Disconnect: ' + (lastError || 'Recovery journal is unresolved.'));
     }
+    return next;
+  };
+  const checkUnowned = candidate => {
+    if (!fs.existsSync(candidate.configPath)) return;
+    const entries = magpieEntries(fs.readFileSync(candidate.configPath, 'utf8'));
+    if (entries.some(entry => sameEndpoint(entry.url, 'http://127.0.0.1:' + candidate.port))) {
+      throw new Error('An unowned filter URL already exists in this config. Restore it from the original installation first.');
+    }
+  };
+  const apply = async (value, startup = false) => {
+    const next = validateUpdate(value, startup);
     transitioning = true;
     const fresh = next.policy.enabled && !proxy;
     let attachmentAttempted = false;
     try {
       if (fresh) {
         const candidate = {configPath: next.configPath, upstream: next.upstream, port: next.port};
-        const checkUnowned = () => {
-          if (!fs.existsSync(candidate.configPath)) return;
-          const entries = magpieEntries(fs.readFileSync(candidate.configPath, 'utf8'));
-          if (entries.some(entry => sameEndpoint(entry.url, 'http://127.0.0.1:' + candidate.port))) {
-            throw new Error('An unowned filter URL already exists in this config. Restore it from the original installation first.');
-          }
-        };
-        checkUnowned();
+        checkUnowned(candidate);
         const candidateRouter = makeRouter(candidate);
         const namespace = instance + ':' + ++proxySequence + ':';
         const namespaced = data => Number.isSafeInteger(data?.requestId) && data.requestId >= 0
@@ -158,11 +181,16 @@ function createController({runtime, configStore}) {
             try { recorder.observe(event, namespaced(data)); }
             catch { /* Optional recording cannot affect forwarding or restoration. */ }
           }});
-        await new Promise((resolve, reject) => {
-          server.once('error', reject); server.listen(next.port, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
-        });
+        try {
+          await new Promise((resolve, reject) => {
+            server.once('error', reject); server.listen(next.port, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
+          });
+        } catch (error) {
+          if (error.code === 'EADDRINUSE') throw offerConflict(next, await portOwner.inspect(next.port));
+          throw error;
+        }
         proxy = server;
-        checkUnowned();
+        checkUnowned(candidate);
         connection = candidate;
         router = candidateRouter;
         atomicWrite(file('connection.json'), JSON.stringify({version: 1, ...connection}));
@@ -170,7 +198,7 @@ function createController({runtime, configStore}) {
         router.sync();
       }
       if (!startup) persist(next, revision + 1);
-      settings = next; if (!startup) revision++; lastError = null;
+      settings = next; if (!startup) revision++; lastError = null; consent = null;
       if (fresh) {
         timer = setInterval(() => {
           if (transitioning || closed) return;
@@ -180,7 +208,6 @@ function createController({runtime, configStore}) {
         timer.unref();
       }
       log('settings-applied', {policyRevision: revision, enabled: settings.policy.enabled, cleanup: settings.policy.cleanup});
-      return status();
     } catch (error) {
       if (fresh && proxy) {
         try {
@@ -193,6 +220,7 @@ function createController({runtime, configStore}) {
       }
       throw error;
     } finally { transitioning = false; }
+    return status();
   };
   const disconnectInternal = async (preservePreference = false) => {
     if (proxy?.stats.activeRequests) throw new Error('There are active requests. Wait for completion or cancel them in the client first.');
@@ -206,18 +234,47 @@ function createController({runtime, configStore}) {
       settings = next; revision++;
       await stopListener(); retireJournal(); connection = router = null; lastError = null;
       log('disconnected');
-      return status();
     } catch (error) { lastError = error.message; throw error; }
     finally { transitioning = false; }
+    return status();
   };
-  return {status, update: value => serial(() => apply(value)),
-    start: () => serial(async () => {
+  const resolvePortConflict = value => serial(async () => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some(key => !['revision', 'challenge', 'confirm'].includes(key))
+      || typeof value.confirm !== 'boolean' || typeof value.challenge !== 'string'
+      || !/^[a-f0-9]{64}$/.test(value.challenge) || !Number.isSafeInteger(value.revision)) {
+      throw Object.assign(new Error('Invalid port-conflict fields.'), {code: 'INVALID_PORT_CONFLICT'});
+    }
+    const conflict = currentConflict();
+    if (closed || !conflict || value.revision !== revision || value.challenge !== conflict.challenge) {
+      throw Object.assign(new Error('Port confirmation expired or changed. Retry activation for fresh consent.'), {code: 'PORT_CONFLICT_STALE'});
+    }
+    const confirmed = consent; consent = null;
+    if (!value.confirm) return status();
+    try {
+      const next = validateUpdate({revision, settings: confirmed.settings});
+      if (!next.policy.enabled || proxy) throw new Error('Connection changed. Retry activation.');
+      checkUnowned(next);
+      if (!conflict.canTerminate) throw Object.assign(new Error('Port owner cannot be safely terminated. Quit it manually and retry.'), {code: 'PORT_OWNER_UNSAFE'});
+      transitioning = portConflictPending = true;
+      try { await portOwner.terminate(next.port, confirmed.owner); }
+      catch (error) {
+        if (error.code === 'PORT_OWNER_CHANGED') throw offerConflict(next, error.conflict || await portOwner.inspect(next.port), error.code);
+        throw error;
+      }
+      await apply({revision, settings: next});
+    } catch (error) { lastError = error.message; throw error; }
+    finally { transitioning = portConflictPending = false; }
+    return status();
+  });
+  return {status, resolvePortConflict, update: value => mutate(() => apply(value)),
+    start: () => mutate(async () => {
       try { if (settings.policy.enabled) await apply({revision, settings}, true); }
       catch (error) { lastError = lastError || error.message; }
       // Recovery/activation failures must leave a reachable console for diagnosis and exit.
       return status();
     }),
-    updateWeb: ({revision: expected, web, ...extra}) => serial(() => {
+    updateWeb: ({revision: expected, web, ...extra}) => mutate(() => {
       if (closed || Object.keys(extra).length || expected !== revision) throw new Error('Settings revision changed or console is closed.');
       if (!web || typeof web !== 'object' || Array.isArray(web)) throw new Error('Invalid web settings.');
       web = {token: store.current.web.token, ...web};
@@ -227,7 +284,7 @@ function createController({runtime, configStore}) {
       store.save({web}, revision + 1); revision++;
       return status();
     }),
-    disconnect: () => serial(() => disconnectInternal()), close: () => serial(async () => {
+    disconnect: () => mutate(() => disconnectInternal()), close: () => mutate(async () => {
     if (closed) return;
     await disconnectInternal(true); closed = true;
     clearInterval(metricsTimer); persistence.timerActive = false;

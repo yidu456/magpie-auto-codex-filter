@@ -28,7 +28,7 @@ function createManagementServer({controller, token, assets = {}, onExit = () => 
         json(403, {error: 'Open the console again from the application to authenticate.'}); return;
       }
       if (req.url === '/api/state' && req.method === 'GET') { json(200, controller.status()); return; }
-      if (req.method !== 'POST' || !['/api/settings', '/api/web', '/api/disconnect', '/api/exit'].includes(req.url)) {
+      if (req.method !== 'POST' || !['/api/settings', '/api/web', '/api/disconnect', '/api/exit', '/api/port-conflict'].includes(req.url)) {
         json(404, {error: 'Unknown route.'}); return;
       }
       if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) { json(415, {error: 'Send application/json.'}); return; }
@@ -41,6 +41,7 @@ function createManagementServer({controller, token, assets = {}, onExit = () => 
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Expected a JSON object.');
       const work = mutations.then(async () => {
+        if (req.url === '/api/port-conflict') return controller.resolvePortConflict(body);
         if (body.revision !== controller.status().revision) throw new Error('Settings revision changed. Reload before saving.');
         if (req.url === '/api/settings') return controller.update(body);
         if (req.url === '/api/web') return controller.updateWeb(body);
@@ -57,8 +58,11 @@ function createManagementServer({controller, token, assets = {}, onExit = () => 
       mutations = work.catch(() => {});
       json(200, await work);
     } catch (error) {
-      json(/revision|active requests|Disconnect|disconnect/.test(error.message) ? 409 : 400,
-        {error: error instanceof SyntaxError ? 'Invalid JSON.' : error.message});
+      const portError = /^PORT_(?:CONFLICT(?:_STALE)?|OWNER_(?:CHANGED|UNSAFE)|INSPECTION_FAILED|TERMINATION_(?:DENIED|TIMEOUT|FAILED)|RELEASE_TIMEOUT)$/.test(error.code || '');
+      json(portError || /revision|active requests|Disconnect|disconnect/.test(error.message) ? 409 : 400,
+        {error: error instanceof SyntaxError ? 'Invalid JSON.' : error.message,
+          ...(portError ? {code: error.code, ...(['PORT_CONFLICT', 'PORT_OWNER_CHANGED'].includes(error.code) && error.conflict
+            ? {conflict: error.conflict} : {})} : {})});
     }
   });
   server.requestTimeout = 10000;

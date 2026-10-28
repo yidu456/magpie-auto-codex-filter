@@ -4,6 +4,7 @@ const tokenFromUrl = new URLSearchParams(location.hash.slice(1)).get('token');
 if (tokenFromUrl) { sessionStorage.setItem('console-token', tokenFromUrl); history.replaceState(null, '', location.pathname + location.search); }
 let token = sessionStorage.getItem('console-token');
 let state, busy = false, dirty = false, webDirty = false, exited = false, poll;
+let dialogConsent = null, consentTimer;
 const policyInputs = [...document.querySelectorAll('[name=cleanup], [data-handler]'), $('enabled'), $('delivery-mode'), $('heartbeat')];
 const deliveryModes = {full: {bufferResponse: true, protectStreamStart: false}, protected: {bufferResponse: false, protectStreamStart: true}, direct: {bufferResponse: false, protectStreamStart: false}};
 const pages = {dashboard: ['过滤控制台', '今日观测与核心开关，其他配置在设置页。'], settings: ['过滤设置', '接入、保护与交付偏好，仅作用于新请求。'], records: ['请求记录', '关注正在处理的阶段与最终结果，不保留模型正文。'], help: ['使用说明', '接入、恢复边界，以及指标能说明什么。']};
@@ -43,11 +44,13 @@ async function api(route, body) {
   const result = await response.json();
   if (!response.ok) {
     if (response.status === 403) {
+      dismissConsent();
       token = null; sessionStorage.removeItem('console-token'); state = null;
       $('login').hidden = false; $('controls').hidden = true;
       $('connection-state').textContent = '需要登录';
     }
-    throw new Error(response.status === 403 ? '令牌无效或已过期，请输入当前生效的管理令牌。' : result.error || '本地服务返回错误');
+    throw Object.assign(new Error(response.status === 403 ? '令牌无效或已过期，请输入当前生效的管理令牌。' : result.error || '本地服务返回错误'),
+      {status: response.status, code: result.code, conflict: result.conflict});
   }
   return result;
 }
@@ -201,6 +204,9 @@ function renderMetrics(metrics, diagnostics) {
 }
 function render() {
   if (!state) return;
+  if (dialogConsent && !busy && (state.revision !== dialogConsent.revision
+    || state.portConflict?.challenge !== dialogConsent.challenge || Date.now() >= dialogConsent.expiresAt)) dismissConsent();
+  const working = busy || state.transitioning;
   $('login').hidden = true; $('controls').hidden = false;
   const settings = state.settings, policy = settings.policy;
   $('connection-state').textContent = states[state.state] || state.state;
@@ -214,17 +220,21 @@ function render() {
     $('client').value = settings.client; $('config-path').value = settings.configPath;
     $('upstream').value = settings.upstream; $('port').value = settings.port;
   }
-  for (const input of document.querySelectorAll('#connection-form input, #connection-form select')) input.disabled = busy || state.connected;
-  $('save-connection').disabled = busy || state.connected;
-  $('disconnect').disabled = busy || (!state.connected && !state.connection && !state.lastError);
-  $('exit').disabled = busy;
+  for (const input of document.querySelectorAll('#connection-form input, #connection-form select')) input.disabled = working || state.connected;
+  $('save-connection').disabled = working || state.connected;
+  $('disconnect').disabled = working || (!state.connected && !state.connection && !state.lastError);
+  $('exit').disabled = working;
+  $('resolve-port').hidden = state.connected || !(state.portConflict || /EADDRINUSE|Port owner changed/.test(state.lastError || ''));
+  $('resolve-port').disabled = working || dirty;
+  $('port-conflict-no').disabled = working;
+  $('port-conflict-yes').disabled = working || !dialogConsent?.canTerminate;
   $('config-file').textContent = state.configFile;
   if (!webDirty) $('web-port').value = state.web.port;
-  for (const input of document.querySelectorAll('#web-form input, #web-form button')) input.disabled = busy;
+  for (const input of document.querySelectorAll('#web-form input, #web-form button')) input.disabled = working;
   $('web-hint').textContent = state.web.restartRequired
     ? '已保存，重启本程序后生效。当前地址：' + location.origin + '；下次地址：http://127.0.0.1:' + state.web.port + '/。退出后再双击 EXE。'
     : '当前地址：' + location.origin + '/。网页端口默认 18185，与过滤端口分开。';
-  for (const input of policyInputs) input.disabled = busy;
+  for (const input of policyInputs) input.disabled = working;
   $('enabled').checked = policy.enabled;
   for (const input of document.querySelectorAll('[name=cleanup]')) input.checked = input.value === policy.cleanup;
   for (const input of document.querySelectorAll('[data-handler]')) {
@@ -255,17 +265,62 @@ function render() {
     for (const value of [new Date(event.time).toLocaleTimeString('zh-CN', {hour12: false}), event.requestId ? '#' + event.requestId : '—', names[event.event] || event.event, details || '—']) row.insertCell().textContent = value;
   }
 }
+function dismissConsent() {
+  clearTimeout(consentTimer); dialogConsent = null;
+  if ($('port-conflict-dialog').open) $('port-conflict-dialog').close();
+}
+function openConsent(conflict) {
+  if (!state || !token || busy || state.transitioning || !conflict || conflict.revision !== state.revision
+    || state.portConflict?.challenge !== conflict.challenge || Date.now() >= conflict.expiresAt) return;
+  dismissConsent(); dialogConsent = conflict;
+  const owner = conflict.owner;
+  $('port-conflict-details').textContent = ['端口：127.0.0.1:' + conflict.port, '进程：' + label(owner?.name, '无法识别'),
+    'PID：' + (Number.isSafeInteger(owner?.pid) && owner.pid > 0 ? String(owner.pid) : '无法识别'), '路径：' + label(owner?.executable, '不可用')].join('\n');
+  $('port-conflict-reason').textContent = conflict.canTerminate ? '此次确认仅有效 60 秒。进程身份变化后必须重新确认。'
+    : '无法安全结束该进程（' + label(conflict.reason, 'IDENTITY_UNAVAILABLE') + '）。请手动退出占用进程后重试。';
+  $('port-conflict-progress').textContent = '';
+  render(); $('port-conflict-dialog').showModal(); $('port-conflict-no').focus();
+  consentTimer = setTimeout(() => {
+    if (busy) return;
+    dismissConsent(); notice('端口确认已过期，请重新尝试接入。', true);
+  }, Math.max(0, conflict.expiresAt - Date.now()));
+}
+async function resolveConsent(confirm) {
+  if (busy || state?.transitioning || !dialogConsent || confirm && !dialogConsent.canTerminate) return;
+  const consent = dialogConsent; let fresh;
+  busy = true; render();
+  $('port-conflict-progress').textContent = confirm ? '正在重新核对进程并等待端口释放，请勿重复操作。已发出的操作不会因网页断开而撤销。' : '正在取消确认，不会结束进程。';
+  try {
+    state = await api('/api/port-conflict', {revision: consent.revision, challenge: consent.challenge, confirm});
+    notice(confirm ? '已开启过滤。新请求使用已保存的策略。' : '已保留占用进程，启用偏好未改变。');
+  } catch (error) {
+    fresh = error.conflict;
+    notice('未完成：' + error.message + (error.status ? '' : '。请求结果尚未确认；已发出的操作不会因网页断开而撤销。'), true);
+    if (token) { try { state = await api('/api/state'); } catch {} }
+  } finally { busy = false; dismissConsent(); render(); }
+  if (fresh) openConsent(fresh);
+}
+$('port-conflict-no').addEventListener('click', () => resolveConsent(false));
+$('port-conflict-yes').addEventListener('click', () => resolveConsent(true));
+$('port-conflict-dialog').addEventListener('cancel', event => { event.preventDefault(); if (!busy) resolveConsent(false); });
+$('resolve-port').addEventListener('click', () => {
+  if (state?.portConflict) openConsent(state.portConflict);
+  else if (state) apply({...state.settings, policy: {...state.settings.policy, enabled: true}});
+});
 async function apply(settings) {
-  if (busy || !state) return;
+  if (busy || !state || state.transitioning) return;
+  dismissConsent(); let conflict;
   busy = true;
   for (const control of document.querySelectorAll('#controls input, #controls select, #controls button')) control.disabled = true;
   try {
     state = await api('/api/settings', {revision: state.revision, settings});
     notice('已应用。新请求使用版本 ' + state.revision + '，已有请求保持原策略。');
   } catch (error) {
+    conflict = error.conflict;
     notice('未应用：' + error.message, true);
     try { state = await api('/api/state'); } catch {}
   } finally { busy = false; render(); }
+  if (conflict) openConsent(conflict);
 }
 for (const input of policyInputs) input.addEventListener('change', async () => {
   if (!state || busy) { render(); return; }
@@ -340,7 +395,8 @@ async function refresh() {
       const next = await api('/api/state');
       if (!busy && (!state || next.revision >= state.revision)) {
         const first = !state; state = next; render();
-        if (state.lastError) notice('需要处理：' + state.lastError, true);
+        if (state.portConflictPending) notice('正在处理已确认的端口占用；等待操作完成，请勿重复操作。');
+        else if (state.lastError) notice('需要处理：' + state.lastError, true);
         else if (first) notice('控制台已按保存的配置启动。仅首次生成配置时默认关闭核心过滤。');
       }
     } catch (error) { notice('无法连接或尚未登录：' + error.message, true); }
