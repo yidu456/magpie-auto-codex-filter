@@ -45,7 +45,7 @@ async (page, {screenshots = '.verification/task-4-browser', only} = {}) => {
     result.applicationIdentity = result.safeIdentityText = true;
   }
   if (!only || only === 'navigation') {
-    await visiblePage('dashboard');
+    await go('dashboard');
     check(await page.locator('#connection-form').isHidden() && await page.locator('#delivery-mode').isHidden(), 'Home must show charts/core only, not other settings');
     check(await page.locator('#page-dashboard input, #page-dashboard select, #page-dashboard button').count() === 2, 'Home must contain only gateway/core switches');
     await go('settings');
