@@ -1,10 +1,32 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const tokenFromUrl = new URLSearchParams(location.hash.slice(1)).get('token');
-if (tokenFromUrl) { sessionStorage.setItem('console-token', tokenFromUrl); history.replaceState(null, '', location.pathname); }
+if (tokenFromUrl) { sessionStorage.setItem('console-token', tokenFromUrl); history.replaceState(null, '', location.pathname + location.search); }
 let token = sessionStorage.getItem('console-token');
 let state, busy = false, dirty = false, webDirty = false, exited = false, poll;
-const policyInputs = [...document.querySelectorAll('[name=cleanup], [data-handler]'), $('enabled'), $('buffer-response'), $('heartbeat')];
+const policyInputs = [...document.querySelectorAll('[name=cleanup], [data-handler]'), $('enabled'), $('delivery-mode'), $('heartbeat')];
+const deliveryModes = {full: {bufferResponse: true, protectStreamStart: false}, protected: {bufferResponse: false, protectStreamStart: true}, direct: {bufferResponse: false, protectStreamStart: false}};
+const pages = {dashboard: ['过滤控制台', '今日观测与核心开关，其他配置在设置页。'], settings: ['过滤设置', '接入、保护与交付偏好，仅作用于新请求。'], records: ['请求记录', '关注正在处理的阶段与最终结果，不保留模型正文。'], help: ['使用说明', '接入、恢复边界，以及指标能说明什么。']};
+function showPage(focus = false) {
+  const query = new URLSearchParams(location.search).get('page');
+  const page = Object.hasOwn(pages, query) ? query : 'dashboard';
+  for (const name of Object.keys(pages)) $('page-' + name).hidden = name !== page;
+  for (const link of document.querySelectorAll('nav a[data-page]')) {
+    const current = link.dataset.page === page;
+    link.classList.toggle('current', current);
+    if (current) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current');
+  }
+  [$('page-title').textContent, $('page-description').textContent] = pages[page];
+  document.title = pages[page][0] + ' · Magpie Filter';
+  if (focus) { $('page-title').focus({preventScroll: true}); window.scrollTo(0, 0); }
+}
+for (const link of document.querySelectorAll('nav a[data-page], .brand')) link.addEventListener('click', event => {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  if (location.pathname + location.search !== link.getAttribute('href')) history.pushState(null, '', link.getAttribute('href'));
+  showPage(true);
+});
+window.addEventListener('popstate', () => showPage(true));
 const names = {'config-state': '接入状态', 'settings-applied': '设置已应用', 'request-started': '请求开始',
   'request-finished': '请求结束', 'history-preserved': '保留历史', filtered: '请求处理', 'history-cleanup': '清理历史',
   'http-error': 'HTTP 错误', 'stream-error': '流式错误', 'transport-error': '连接异常', 'retry-scheduled': '等待重试',
@@ -33,10 +55,154 @@ function readConnection() {
   return {...state.settings, client: $('client').value, configPath: $('config-path').value.trim(),
     upstream: $('upstream').value.trim(), port: Number($('port').value)};
 }
+const kinds = {resource: '资源 / 历史', rateLimit: '临时限流', transport: '网络 / 中继 / 断流', availability: '无可用渠道', local: '本地', other: '其他'};
+const finite = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER;
+const number = (value, missing = '不可用') => finite(value) ? value.toLocaleString('zh-CN', {maximumFractionDigits: 1}) : missing;
+const ms = value => finite(value) ? number(value) + ' ms' : '未观测';
+const label = (value, missing = '未知') => typeof value === 'string' && value.length ? value : missing;
+function time(value) {
+  if (typeof value !== 'string' && !finite(value)) return '时间未知';
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleTimeString('zh-CN', {hour12: false}) : '时间未知';
+}
+function table(id, rows, columns, empty = '暂无记录。') {
+  const body = $(id); body.replaceChildren();
+  if (!rows.length) {
+    const cell = body.insertRow().insertCell(); cell.colSpan = columns; cell.className = 'empty'; cell.textContent = empty;
+  }
+  for (const values of rows) {
+    const row = body.insertRow();
+    for (const value of values) row.insertCell().textContent = value;
+  }
+}
+function dimensions(id, values, translated = false, empty = '暂无事件。') {
+  const rows = values && typeof values === 'object' && !Array.isArray(values) ? Object.entries(values).slice(0, 101) : [];
+  table(id, rows.map(([key, value]) => [translated && Object.hasOwn(kinds, key) ? kinds[key] : key, number(value)]), 2, empty);
+}
+function svgElement(tag, attributes = {}, text) {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value);
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+function chartShell(id, title) {
+  const container = $(id); container.replaceChildren();
+  const svg = svgElement('svg', {viewBox: '0 0 560 190', role: 'img', 'aria-label': title});
+  svg.append(svgElement('title', {}, title)); container.append(svg); return svg;
+}
+function emptyChart(id, message) {
+  const container = $(id), text = document.createElement('p');
+  text.className = 'empty-chart'; text.textContent = message; container.replaceChildren(text);
+}
+function trend(id, series, fields) {
+  if (!series.length || !series.some(bucket => fields.some(([key]) => finite(bucket[key])))) {
+    emptyChart(id, '暂无可用分钟观测；不会补造缺失数据。'); return;
+  }
+  const svg = chartShell(id, fields.map(([, name]) => name).join('、') + '分钟趋势；具体值见下方表格');
+  const max = Math.max(1, ...series.flatMap(bucket => fields.map(([key]) => finite(bucket[key]) ? bucket[key] : 0)));
+  const first = series[0].minute, last = series.at(-1).minute;
+  const x = minute => first === last ? 294 : 48 + (minute - first) / (last - first) * 492;
+  const y = value => 145 - value / max * 118;
+  svg.append(svgElement('path', {d: 'M48 20V145H540', class: 'chart-axis'}), svgElement('text', {x: 40, y: 31, 'text-anchor': 'end', class: 'chart-label'}, number(max)), svgElement('text', {x: 40, y: 149, 'text-anchor': 'end', class: 'chart-label'}, '0'));
+  fields.forEach(([key, name], index) => {
+    let path = '', connected = false;
+    for (const bucket of series) {
+      if (!finite(bucket[key])) { connected = false; continue; }
+      path += (connected ? 'L' : 'M') + x(bucket.minute) + ' ' + y(bucket[key]); connected = true;
+      const point = svgElement('circle', {cx: x(bucket.minute), cy: y(bucket[key]), r: 3, class: 'chart-point color-' + index});
+      point.append(svgElement('title', {}, time(bucket.minute) + ' ' + name + '：' + number(bucket[key]))); svg.append(point);
+    }
+    svg.append(svgElement('path', {d: path, class: 'chart-line color-' + index}));
+    svg.append(svgElement('text', {x: 48 + index * 158, y: 187, class: 'chart-label color-' + index}, name));
+  });
+  svg.append(svgElement('text', {x: 48, y: 163, class: 'chart-label'}, time(first)), svgElement('text', {x: 540, y: 163, 'text-anchor': 'end', class: 'chart-label'}, time(last)));
+}
+function histogram(id, histogram) {
+  const valid = histogram && finite(histogram.count) && histogram.count > 0 && finite(histogram.sumMs)
+    && Array.isArray(histogram.boundsMs) && histogram.boundsMs.length === 7 && histogram.boundsMs.every((v, i, a) => finite(v) && (!i || v > a[i - 1]))
+    && Array.isArray(histogram.counts) && histogram.counts.length === 8 && histogram.counts.every(finite);
+  if (!valid) {
+    emptyChart(id + '-chart', '暂无延迟样本。'); $(id + '-summary').textContent = '未观测到有效延迟；不推算均值或百分位。';
+    table(id + '-rows', [], 2, '暂无延迟样本。'); return;
+  }
+  const bounds = histogram.boundsMs;
+  const rows = histogram.counts.map((count, i) => [i === 0 ? '0–' + number(bounds[0]) + ' ms' : i === 7 ? '> ' + number(bounds[6]) + ' ms' : '> ' + number(bounds[i - 1]) + '–' + number(bounds[i]) + ' ms', number(count)]);
+  $(id + '-summary').textContent = '平均 ' + ms(histogram.sumMs / histogram.count) + '；' + number(histogram.count) + ' 个样本。区间右端包含边界，不提供推算百分位。';
+  table(id + '-rows', rows, 2);
+  const svg = chartShell(id + '-chart', (id === 'ttfb' ? '首次实际交付' : '总时长') + '分布；具体区间与样本数见下方表格');
+  const max = Math.max(1, ...histogram.counts);
+  svg.append(svgElement('path', {d: 'M36 22V148H548', class: 'chart-axis'}));
+  histogram.counts.forEach((count, i) => {
+    const height = count / max * 116, x = 48 + i * 62;
+    const bar = svgElement('rect', {x, y: 148 - height, width: 38, height, rx: 3, class: 'chart-bar color-' + (id === 'ttfb' ? 0 : 1)});
+    bar.append(svgElement('title', {}, rows[i].join('：'))); svg.append(bar);
+    svg.append(svgElement('text', {x: x + 19, y: 140 - height, 'text-anchor': 'middle', class: 'chart-label'}, number(count)));
+    svg.append(svgElement('text', {x: x + 19, y: 172, 'text-anchor': 'middle', class: 'chart-label'}, i === 7 ? '>60s' : '≤' + number(bounds[i] / 1000) + 's'));
+  });
+}
+function records(id, items, active = false) {
+  const phases = {upload: '接收上传', upstream: '等待上游', backoff: '退避等待', streaming: '正在交付', finished: '已结束'};
+  const outcomes = {success: '成功', failed: '失败', canceled: '取消', unavailable: '结果不可观测'};
+  table(id, items.map(record => {
+    const usage = record.usage;
+    const usageState = {pending: '等待观测', observed: '已观测', unavailable: '未观测 / 不可用'}[record.usageState] || '观测状态未知';
+    return [label(record.requestId) + '\n模型：' + label(record.model),
+      active ? phases[record.phase] || label(record.phase) : (outcomes[record.outcome] || '结果未知') + '\nHTTP ' + number(record.status, '未知') + '\n' + label(record.errorCode, '无已记录错误') + '\n' + (Object.hasOwn(kinds, record.errorKind) ? kinds[record.errorKind] : '无已记录错误类别'),
+      '开始 ' + time(record.startedAt) + (active ? '\n已耗时 ' + ms(record.elapsedMs) : '\n结束 ' + time(record.finishedAt) + '\n总时长 ' + ms(record.durationMs)) + '\n首交付 ' + ms(record.ttfbMs),
+      (record.enabled === true ? '核心启用' : record.enabled === false ? '核心关闭' : '核心状态未知') + '\n' + (record.streaming === true ? '流式请求' : record.streaming === false ? '非流式请求' : '流式未知') + '\n策略版本 ' + number(record.policyRevision, '未知') + '\n' + (record.observationAvailable === true ? '检查可用' : record.observationAvailable === false ? '检查不可用' : '检查可用性未知'),
+      '计划 ' + number(record.retryScheduled) + ' / 执行 ' + number(record.retryDispatched) + '\n' + (Array.isArray(record.retryKinds) && record.retryKinds.length ? record.retryKinds.map(kind => Object.hasOwn(kinds, kind) ? kinds[kind] : label(kind)).join('、') : '无已记录重试类别'),
+      usageState + '\n输入 ' + number(usage?.input_tokens, '未观测') + ' / 输出 ' + number(usage?.output_tokens, '未观测') + '\n缓存 ' + number(usage?.input_tokens_details?.cached_tokens, '未观测') + ' / 总量 ' + number(usage?.total_tokens, '未观测')];
+  }), 6, active ? '没有保留的活动请求。' : '暂无最近结束记录；进程重启后从新请求开始记录。');
+}
+function renderMetrics(metrics, diagnostics) {
+  const totals = metrics?.totals, retry = metrics?.retry;
+  $('metrics-date').textContent = label(metrics?.date, '日期不可用');
+  for (const key of ['started', 'success', 'failed', 'canceled', 'unavailable']) $('daily-' + key).textContent = number(totals?.[key]);
+  $('daily-recovered').textContent = number(retry?.recoveredRequests);
+  for (const [id, key] of [['token-input', 'inputTokens'], ['token-output', 'outputTokens'], ['token-cached', 'cachedInputTokens'], ['token-total', 'totalTokens']]) $(id).textContent = number(totals?.[key], '未观测');
+  $('token-coverage').textContent = '有效 usage 观测：' + number(totals?.usageRequests) + ' 条请求。仅计已观测值；可选缓存与总量可能只覆盖部分观测，非账单。核心关闭时不解析 Token。';
+  for (const [id, key] of [['retry-scheduled', 'scheduled'], ['retry-dispatched', 'dispatched'], ['retry-recovered', 'recoveredRequests'], ['retry-exhausted', 'exhausted']]) $(id).textContent = number(retry?.[key]);
+  $('retry-wait').textContent = ms(retry?.plannedWaitMs);
+  for (const [id, key] of [['history-kept', 'kept'], ['history-removed', 'removed'], ['history-ids', 'removedItemIds'], ['history-cleanups', 'cleanups']]) $(id).textContent = number(totals?.[key]);
+  dimensions('recovery-kind-rows', retry?.recoveredByKind, true);
+  dimensions('error-kind-rows', metrics?.errorsByKind, true); dimensions('error-code-rows', metrics?.errorsByCode);
+  dimensions('model-rows', metrics?.byModel, false, '暂无已结束的模型请求。');
+  const series = Array.isArray(metrics?.series) ? metrics.series.slice(-180).filter(bucket => bucket && finite(bucket.minute)) : [];
+  trend('request-chart', series, [['started', '开始请求'], ['failed', '失败'], ['retries', '实际重试']]);
+  trend('token-chart', series, [['inputTokens', '输入 Token'], ['outputTokens', '输出 Token']]);
+  $('request-series-summary').textContent = series.length ? series.length + ' 个有事件的分钟窗口；空白分钟不补造事件，数据见表。' : '暂无分钟记录，重启后曲线重新开始。';
+  $('token-series-summary').textContent = '只绘制有观测的值；缺失 usage 不当作零。';
+  table('request-series-rows', series.map(bucket => [time(bucket.minute), number(bucket.started), number(bucket.success), number(bucket.failed), number(bucket.canceled) + ' / ' + number(bucket.unavailable), number(bucket.retries)]), 6);
+  table('token-series-rows', series.map(bucket => [time(bucket.minute), number(bucket.inputTokens, '未观测'), number(bucket.outputTokens, '未观测')]), 3);
+  histogram('ttfb', metrics?.latency?.ttfb); histogram('duration', metrics?.latency?.duration);
+  const active = Array.isArray(metrics?.active) ? metrics.active.slice(0, 1000).filter(record => record && typeof record === 'object') : [];
+  const recent = Array.isArray(metrics?.recent) ? metrics.recent.slice(0, 200).filter(record => record && typeof record === 'object') : [];
+  const older = active.filter(record => finite(record.policyRevision) && record.policyRevision !== state.revision).length;
+  $('request-count').textContent = metrics ? active.length + ' 条保留活动记录' : '记录不可用';
+  $('inflight').textContent = !metrics ? '请求观测不可用。' : active.length ? `保留 ${active.length} 条活动请求${older ? `，其中 ${older} 条仍使用旧版策略` : ''}。进行中的请求不会因切换而中断；超限未保留请求见诊断。` : '没有保留的活动请求。';
+  records('active-rows', active, true); records('recent-rows', recent);
+  const logs = diagnostics?.logs, persistence = diagnostics?.persistence, recorder = metrics?.diagnostics;
+  const warnings = [];
+  if (!metrics || !diagnostics) warnings.push('部分指标或诊断不可用');
+  if (logs?.droppedLines) warnings.push('日志丢弃 ' + number(logs.droppedLines) + ' 行');
+  if (logs?.writeErrors) warnings.push('日志写入错误 ' + number(logs.writeErrors) + ' 次，最近：' + label(logs.lastError, '已恢复'));
+  if (persistence?.loadError) warnings.push('日汇总加载警告：' + label(persistence.loadError));
+  if (persistence?.writeErrors) warnings.push('日汇总写入错误 ' + number(persistence.writeErrors) + ' 次，最近：' + label(persistence.lastError, '已恢复'));
+  if (recorder?.droppedActive) warnings.push('超限未保留活动请求 ' + number(recorder.droppedActive) + ' 条');
+  if (recorder?.invalidEvents) warnings.push('无效观测 ' + number(recorder.invalidEvents) + ' 次');
+  if (recorder?.corruptSnapshots) warnings.push('无效汇总快照 ' + number(recorder.corruptSnapshots) + ' 次');
+  $('metric-diagnostics').textContent = warnings.length ? warnings.join('；') + '。请求转发不受阻塞。' : '未发现记录诊断异常。日汇总同日可恢复；分钟曲线和最近记录仅保留于当前进程。';
+  $('metric-diagnostics').classList.toggle('warning', !!warnings.length);
+  const rows = [['日志排队', number(logs?.queuedLines) + ' 行 / ' + number(logs?.queuedBytes) + ' 字节'], ['日志丢弃 / 写入错误', number(logs?.droppedLines) + ' / ' + number(logs?.writeErrors)], ['日志写入批次 / 轮转', number(logs?.writes) + ' / ' + number(logs?.rotations)], ['日志最近错误', label(logs?.lastError, logs ? '无' : '不可用')], ['日汇总加载警告', label(persistence?.loadError, persistence ? '无' : '不可用')], ['日汇总写入错误 / 最近错误', number(persistence?.writeErrors) + ' / ' + label(persistence?.lastError, persistence ? '无' : '不可用')], ['最近日汇总保存', label(persistence?.lastSavedAt, '尚未保存 / 不可用')], ['无效观测 / 超限活动 / 无效快照', number(recorder?.invalidEvents) + ' / ' + number(recorder?.droppedActive) + ' / ' + number(recorder?.corruptSnapshots)]];
+  $('diagnostics').replaceChildren();
+  for (const [key, value] of rows) {
+    const term = document.createElement('dt'), detail = document.createElement('dd'); term.textContent = key; detail.textContent = value; $('diagnostics').append(term, detail);
+  }
+}
 function render() {
   if (!state) return;
   $('login').hidden = true; $('controls').hidden = false;
-  const settings = state.settings, policy = settings.policy, stats = state.stats;
+  const settings = state.settings, policy = settings.policy;
   $('connection-state').textContent = states[state.state] || state.state;
   $('connection-state').classList.toggle('on', state.attached);
   $('core-state').textContent = policy.enabled ? state.connected ? '已开启' : '待接入' : '已关闭';
@@ -64,23 +230,20 @@ function render() {
   for (const input of document.querySelectorAll('[data-handler]')) {
     input.checked = policy.handlers[input.dataset.handler];
     if (input.dataset.handler === 'encryptedContent') input.disabled ||= policy.cleanup !== 'conditional';
-    if (input.dataset.handler === 'streamIncomplete') input.disabled ||= !policy.bufferResponse;
+    if (input.dataset.handler === 'streamIncomplete') input.disabled ||= !(policy.bufferResponse || policy.protectStreamStart);
   }
-  $('buffer-response').checked = policy.bufferResponse; $('heartbeat').checked = policy.heartbeat;
-  $('heartbeat').disabled ||= !policy.bufferResponse;
+  const mode = policy.bufferResponse ? 'full' : policy.protectStreamStart ? 'protected' : 'direct';
+  $('delivery-mode').value = mode; $('heartbeat').checked = policy.heartbeat;
+  $('heartbeat').disabled ||= mode === 'direct';
+  $('delivery-description').textContent = {full: '等本轮成功再交付正文和工具事件，失败尝试不会泄露。', protected: '首次内容增量前检查早期错误，再持续流式交付；正文交付后不重放。', direct: '即时转发，不拦截流内错误；核心关闭时也始终直通。'}[mode];
   $('stream-warning').hidden = policy.bufferResponse;
+  $('stream-warning').textContent = mode === 'protected' ? '保护首段只恢复交付前的早期错误。首次内容交付后不再重试、清理或重放工具；晚期失败仍记作失败。' : '直接流式不拦截流内错误，开始转发后不再重试，也无法撤回已交付的工具事件。';
   $('revision').textContent = '已生效 · 版本 ' + state.revision;
-  $('policy-version').textContent = state.revision;
-  $('active-count').textContent = stats.activeRequests || 0;
-  $('request-count').textContent = (stats.requests || 0) + ' 条请求';
-  $('reasoning-count').textContent = stats.removedReasoningItems || 0;
-  $('retry-count').textContent = ['resourceRetries', 'rateLimitRetries', 'transportRetries', 'availabilityRetries'].reduce((sum, key) => sum + (stats[key] || 0), 0);
-  const older = state.activePolicies.filter(x => x.policyRevision !== state.revision).length;
-  $('inflight').textContent = stats.activeRequests ? `正在处理 ${stats.activeRequests} 条请求${older ? `，其中 ${older} 条仍使用旧版策略` : ''}。进行中的请求不会因切换而中断。` : '没有进行中的请求。';
+  renderMetrics(state.metrics, state.diagnostics);
   $('connection-hint').textContent = dirty ? '有未保存的接入设置。保存后再开启总开关。'
     : state.connected ? '已连接：改端口前先断开并恢复，重新接入后重启 Codex。' : '默认端口 18184，可更改。更改端口并重新接入后，需要重启 Codex。';
   const body = $('events'); body.replaceChildren();
-  const recent = state.events.slice(-60).reverse();
+  const recent = (state.events || []).slice(-60).reverse();
   if (!recent.length) {
     const row = body.insertRow(), cell = row.insertCell(); cell.colSpan = 4; cell.className = 'empty';
     cell.textContent = '尚无记录。开启接入后，这里会显示经过过滤器的请求。';
@@ -110,10 +273,11 @@ for (const input of policyInputs) input.addEventListener('change', async () => {
   const policy = {...state.settings.policy, handlers: {...state.settings.policy.handlers}};
   if (input.name === 'cleanup') policy.cleanup = input.value;
   else if (input.dataset.handler) policy.handlers[input.dataset.handler] = input.checked;
-  else {
-    const key = {enabled: 'enabled', 'buffer-response': 'bufferResponse', heartbeat: 'heartbeat'}[input.id];
-    if (key === 'bufferResponse' && !input.checked && !confirm('关闭整轮暂存后会直接显示流式输出，但流中失败不能再重试，也不能撤回已交付的工具事件。确定关闭？')) { render(); return; }
-    policy[key] = input.checked;
+  else if (input.id === 'delivery-mode') {
+    if (input.value === 'direct' && !confirm('直接流式不拦截流内错误，已交付的正文和工具事件不能撤回。确定切换？')) { render(); return; }
+    Object.assign(policy, deliveryModes[input.value]);
+  } else {
+    policy[input.id] = input.checked;
   }
   await apply({...state.settings, policy});
 });
@@ -183,5 +347,6 @@ async function refresh() {
   }
   if (!exited) poll = setTimeout(refresh, document.hidden ? 5000 : 1500);
 }
+showPage();
 if (!token) { $('connection-state').textContent = '需要登录'; notice('请输入 EXE 同目录配置文件中的 web.token，或再次双击 EXE 自动登录。'); }
 refresh();

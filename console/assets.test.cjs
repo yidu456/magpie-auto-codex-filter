@@ -26,3 +26,22 @@ test('manual login and pending web settings are available without exposing a tok
   assert.match(html, /id="controls" hidden/);
   assert.match(html, /重启 Codex/);
 });
+
+test('direct settings, records and help pages share only the whitelisted console shell', async t => {
+  const assets = require('./assets.cjs').loadAssets();
+  const server = require('./server.cjs').createManagementServer({token: 'test', assets, controller: {status: () => ({revision: 0})}});
+  t.after(() => close(server)); const origin = await listen(server);
+  for (const route of ['/?page=settings', '/?page=records', '/?page=help']) {
+    const response = await call(origin, route, {method: 'GET'});
+    assert.equal(response.status, 200, route);
+    assert.equal(response.body, assets['/'].body);
+    assert.match(response.headers['content-security-policy'], /script-src 'self'/);
+    assert.equal(response.headers['cache-control'], 'no-store');
+  }
+  for (const route of ['/?page=unknown', '/records', '/help', '/?page=help&file=controller.cjs', '/app.js?page=help']) {
+    const response = await call(origin, route, {method: 'GET', headers: {'x-console-token': 'test'}});
+    assert.equal(response.status, 404, route);
+    assert.doesNotMatch(response.body, /<!doctype/);
+  }
+  assert.equal((await call(origin, '/api/state', {method: 'GET'})).status, 403);
+});

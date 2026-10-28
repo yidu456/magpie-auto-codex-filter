@@ -11,12 +11,12 @@
 </head>
 <body>
   <aside class="rail">
-    <a class="brand" href="#console"><span class="mark" aria-hidden="true">M<span>f</span></span><span>Magpie Filter<small>本地过滤控制台</small></span></a>
-    <nav aria-label="主导航"><a href="#console" class="current">控制台</a><a href="#requests">请求记录</a><a href="#notes">使用说明</a></nav>
+    <a class="brand" href="/"><span class="mark" aria-hidden="true">M<span>f</span></span><span>Magpie Filter<small>本地过滤控制台</small></span></a>
+    <nav aria-label="主导航"><a href="/" data-page="dashboard" aria-current="page" class="current">控制台</a><a href="/?page=settings" data-page="settings">设置</a><a href="/?page=records" data-page="records">请求记录</a><a href="/?page=help" data-page="help">使用说明</a></nav>
     <div class="rail-bottom"><span class="local-dot"></span> 仅在本机运行<small>Codex / Magpie<br>Dev 预览版</small></div>
   </aside>
   <main id="console">
-    <header class="page-header"><div><p class="breadcrumb">工作空间 / 过滤器</p><h1>过滤控制台</h1><p>保留有效的保护，把选择权留给你。</p></div><span class="badge" id="connection-state">正在连接控制台</span></header>
+    <header class="page-header"><div><p class="breadcrumb">工作空间 / 过滤器</p><h1 id="page-title" tabindex="-1">过滤控制台</h1><p id="page-description">保留有效的保护，把选择权留给你。</p></div><span class="badge" id="connection-state">正在连接控制台</span></header>
     <div id="notice" class="notice" role="status" aria-live="polite">正在读取本地设置…</div>
     <section id="login" class="panel" aria-labelledby="login-title">
       <div class="section-heading"><div><h2 id="login-title">登录本地控制台</h2><p>在 EXE 同目录的 MagpieFilter.config.json 中查看 web.token。令牌只用于本机管理，不是模型 API 密钥。</p></div></div>
@@ -26,10 +26,29 @@
       </form>
     </section>
     <div id="controls" hidden>
+    <div id="page-dashboard">
     <section class="master" aria-labelledby="master-title">
       <div class="master-copy"><div class="master-heading"><span id="core-lamp" class="lamp"></span><h2 id="master-title">核心过滤</h2><span id="core-state">关闭</span></div><p id="core-description">关闭时不清理、不重试、不暂存；已接入的请求直通 Magpie。</p></div>
       <label class="switch"><input id="enabled" type="checkbox" role="switch" aria-label="核心过滤总开关" disabled><span class="switch-track" aria-hidden="true"></span></label>
     </section>
+    <section class="panel" aria-labelledby="daily-title">
+      <div class="section-heading"><div><h2 id="daily-title">今日请求</h2><p>按事件发生的本地日期统计；失败次数不等于错误事件数。</p></div><span class="tag" id="metrics-date">日期不可用</span></div>
+      <div class="metric-grid daily-kpis"><div><span>开始请求</span><strong id="daily-started">不可用</strong></div><div><span>成功</span><strong id="daily-success">不可用</strong></div><div><span>失败</span><strong id="daily-failed">不可用</strong></div><div><span>取消</span><strong id="daily-canceled">不可用</strong></div><div><span>结果不可观测</span><strong id="daily-unavailable">不可用</strong></div><div><span>重试后成功恢复</span><strong id="daily-recovered">不可用</strong></div></div>
+      <p id="metric-diagnostics" class="budget">正在读取指标诊断。</p>
+    </section>
+    <div class="chart-grid">
+      <section class="panel" aria-labelledby="request-chart-title"><div class="section-heading"><div><h2 id="request-chart-title">请求与重试趋势</h2><p>当前进程最近 180 个分钟窗口内有事件的分钟；重试只计实际执行。</p></div></div><figure><div id="request-chart" class="chart"></div><figcaption id="request-series-summary"></figcaption></figure><div class="event-table series-table" tabindex="0" role="region" aria-label="可滚动数据表"><table><caption class="sr-only">分钟请求与重试数据</caption><thead><tr><th>时间</th><th>开始</th><th>成功</th><th>失败</th><th>取消 / 不可观测</th><th>重试</th></tr></thead><tbody id="request-series-rows"></tbody></table></div></section>
+      <section class="panel" aria-labelledby="tokens-title"><div class="section-heading"><div><h2 id="tokens-title">已观测 Token</h2><p id="token-coverage">仅来自有效的 response.completed.usage，不是账单或全量估算。</p></div></div><div class="metric-grid"><div><span>输入</span><strong id="token-input">未观测</strong></div><div><span>输出</span><strong id="token-output">未观测</strong></div><div><span>缓存输入（可选）</span><strong id="token-cached">未观测</strong></div><div><span>总量（可选）</span><strong id="token-total">未观测</strong></div></div><figure><div id="token-chart" class="chart"></div><figcaption id="token-series-summary"></figcaption></figure><div class="event-table series-table" tabindex="0" role="region" aria-label="可滚动数据表"><table><caption class="sr-only">分钟已观测 Token 数据</caption><thead><tr><th>时间</th><th>输入</th><th>输出</th></tr></thead><tbody id="token-series-rows"></tbody></table></div></section>
+      <section class="panel" aria-labelledby="ttfb-title"><div class="section-heading"><div><h2 id="ttfb-title">首次实际交付延迟</h2><p>包含上传与保护等待；保活不是首次正文交付。</p></div></div><figure><div id="ttfb-chart" class="chart"></div><figcaption id="ttfb-summary"></figcaption></figure><div class="event-table" tabindex="0" role="region" aria-label="可滚动数据表"><table><caption class="sr-only">首次交付延迟分布</caption><thead><tr><th>区间</th><th>样本数</th></tr></thead><tbody id="ttfb-rows"></tbody></table></div></section>
+      <section class="panel" aria-labelledby="duration-title"><div class="section-heading"><div><h2 id="duration-title">请求总时长</h2><p>从开始上传到最终结束；仅统计有观测时长的请求。</p></div></div><figure><div id="duration-chart" class="chart"></div><figcaption id="duration-summary"></figcaption></figure><div class="event-table" tabindex="0" role="region" aria-label="可滚动数据表"><table><caption class="sr-only">请求总时长分布</caption><thead><tr><th>区间</th><th>样本数</th></tr></thead><tbody id="duration-rows"></tbody></table></div></section>
+    </div>
+    <section class="panel" aria-labelledby="retry-title"><div class="section-heading"><div><h2 id="retry-title">重试与历史处理</h2><p>恢复指实际重试后最终成功的请求；计划等待不是实测耗时或节省时间。</p></div></div><div class="metric-grid"><div><span>计划重试</span><strong id="retry-scheduled">不可用</strong></div><div><span>实际执行</span><strong id="retry-dispatched">不可用</strong></div><div><span>成功恢复请求</span><strong id="retry-recovered">不可用</strong></div><div><span>重试耗尽事件</span><strong id="retry-exhausted">不可用</strong></div><div><span>计划等待合计</span><strong id="retry-wait">不可用</strong></div></div><div class="metric-grid history-metrics"><div><span>初始保留输入项</span><strong id="history-kept">不可用</strong></div><div><span>移除推理项</span><strong id="history-removed">不可用</strong></div><div><span>移除项 ID 数</span><strong id="history-ids">不可用</strong></div><div><span>实际清理请求</span><strong id="history-cleanups">不可用</strong></div></div><p class="budget">初始保留与实际移除是不同事件的累加，不是 Token 或最终历史长度。一次恢复可涉及多类重试，各类恢复数不可相加当作请求总数。</p><div class="event-table" tabindex="0" role="region" aria-label="可滚动数据表"><table><caption class="sr-only">按实际执行类别的成功恢复请求</caption><thead><tr><th>恢复涉及类别</th><th>请求数</th></tr></thead><tbody id="recovery-kind-rows"></tbody></table></div></section>
+    <div class="chart-grid dimensions">
+      <section class="panel" aria-labelledby="errors-title"><div class="section-heading"><div><h2 id="errors-title">错误类别与代码</h2><p>按错误发生次数统计，包含随后恢复成功的尝试。</p></div></div><div class="event-table" tabindex="0" role="region" aria-label="可滚动数据表"><table><thead><tr><th>类别</th><th>次数</th></tr></thead><tbody id="error-kind-rows"></tbody></table></div><div class="event-table" tabindex="0" role="region" aria-label="可滚动数据表"><table><thead><tr><th>代码</th><th>次数</th></tr></thead><tbody id="error-code-rows"></tbody></table></div></section>
+      <section class="panel" aria-labelledby="models-title"><div class="section-heading"><div><h2 id="models-title">按模型的结束请求</h2><p>统计最终结束结果，不是开始数、成功数或 Token。未知与超限标签归入 other。</p></div></div><div class="event-table" tabindex="0" role="region" aria-label="可滚动数据表"><table><thead><tr><th>模型标签</th><th>结束请求数</th></tr></thead><tbody id="model-rows"></tbody></table></div></section>
+    </div>
+    </div>
+    <div id="page-settings" hidden>
     <section class="panel connection" aria-labelledby="connection-title">
       <div class="section-heading"><div><h2 id="connection-title">客户端接入</h2><p>先保存接入设置，再开启总开关。这里只管理过滤器，不管理模型账号。</p></div><span class="tag">Codex → Filter → Magpie</span></div>
       <form id="connection-form">
@@ -67,8 +86,8 @@
         <label class="check-row"><input type="checkbox" data-handler="azureResource" checked><span><strong>Azure 资源归属错误</strong><small>精确识别跨资源历史项；条件模式下清理后重试。</small></span><em>最多 5 次</em></label>
         <label class="check-row"><input type="checkbox" data-handler="encryptedContent" checked><span><strong>无效推理密文</strong><small>仅条件模式处理 invalid_encrypted_content。</small></span><em>共享资源额度</em></label>
         <label class="check-row"><input type="checkbox" data-handler="rateLimit" checked><span><strong>临时限流</strong><small>按服务端等待要求退避；不包含余额和配额耗尽。</small></span><em>最多 20 次</em></label>
-        <label class="check-row"><input type="checkbox" data-handler="transport" checked><span><strong>网络错误与空闲超时</strong><small>连接失败、网络异常及上游长时间无数据。</small></span><em>最多 10 次</em></label>
-        <label class="check-row"><input type="checkbox" data-handler="streamIncomplete" checked><span><strong>流式中断 / 无详情失败</strong><small>丢弃失败尝试后重试；需要开启整轮暂存。</small></span><em>共享断流额度</em></label>
+        <label class="check-row"><input type="checkbox" data-handler="transport" checked><span><strong>网络 / 中继 / 服务器错误</strong><small>网络异常、空闲超时、明确断连、中继错误，以及未归类的 JSON 对象 HTTP 5xx；不包含鉴权、余额等业务错误。</small></span><em>最多 10 次</em></label>
+        <label class="check-row"><input type="checkbox" data-handler="streamIncomplete" checked><span><strong>流式中断 / 无详情失败</strong><small>整轮暂存或保护首段期间可恢复；正文交付后不重放。</small></span><em>共享断流额度</em></label>
         <label class="check-row"><input type="checkbox" data-handler="alb400" checked><span><strong>ALB 网关 HTML 400</strong><small>只匹配已知 ALB 错误页，不扩大到所有 HTTP 400。</small></span><em>共享断流额度</em></label>
         <label class="check-row"><input type="checkbox" data-handler="unavailable" checked><span><strong>无可用渠道</strong><small>明确报告 no_available_channel 时尝试恢复。</small></span><em>最多 10 次</em></label>
       </div>
@@ -76,19 +95,32 @@
     </section>
     <section class="panel" aria-labelledby="delivery-title">
       <div class="section-heading"><div><h2 id="delivery-title">响应交付</h2><p>这是显示速度与中途错误恢复能力之间的取舍，不会改变模型生成速度。</p></div></div>
-      <div class="handler-grid delivery">
-        <label class="check-row"><input id="buffer-response" type="checkbox" checked><span><strong>整轮暂存后交付</strong><small>等本轮成功再交付正文和工具事件，失败尝试不会泄露。</small></span><em>默认开启</em></label>
-        <label class="check-row"><input id="heartbeat" type="checkbox" checked><span><strong>等待期间发送保活</strong><small>发送空的进度事件，避免客户端误以为连接停止。</small></span><em>依赖整轮暂存</em></label>
+      <div class="delivery-layout">
+        <label class="delivery-select">交付模式<select id="delivery-mode"><option value="full">整轮暂存（默认）</option><option value="protected">保护首段流式</option><option value="direct">直接流式</option></select><small id="delivery-description">等本轮成功再交付正文和工具事件。</small></label>
+        <label class="check-row"><input id="heartbeat" type="checkbox" checked><span><strong>等待期间发送保活</strong><small>整轮暂存或保护首段的等待期间可用；正文交付后停止。核心关闭时不发送。</small></span></label>
       </div>
-      <p id="stream-warning" class="warning" hidden>当前直接流式交付：开始转发后不再重试，也无法撤回已交付的工具事件。流中密文错误、资源错误和中断处理均不生效。</p>
+      <p id="stream-warning" class="warning" hidden></p>
     </section>
-    <section class="panel" id="requests" aria-labelledby="requests-title">
-      <div class="section-heading"><div><h2 id="requests-title">请求记录</h2><p>只记录事件与计数，不展示密钥、提示词或模型正文。</p></div><span id="request-count" class="tag">0 条请求</span></div>
-      <div class="metrics"><div><span>正在处理</span><strong id="active-count">0</strong></div><div><span>移除推理项</span><strong id="reasoning-count">0</strong></div><div><span>额外重试</span><strong id="retry-count">0</strong></div><div><span>当前策略版本</span><strong id="policy-version">0</strong></div></div>
+    <section class="notes exit-note"><h2>停止接管</h2><div class="form-footer"><span>退出会恢复本程序改写的地址；有进行中的请求时需先等待结束。关闭网页不会停止服务。</span><button id="exit" type="button" class="danger">退出程序并恢复配置</button></div></section>
+    </div>
+    <div id="page-records" hidden>
+    <section class="panel" aria-labelledby="requests-title">
+      <div class="section-heading"><div><h2 id="requests-title">正在处理</h2><p>只保留有限元数据，不展示密钥、提示词、模型正文或工具参数。窄屏可横向滑动表格；键盘聚焦后用方向键滚动。</p></div><span id="request-count" class="tag">正在读取</span></div>
       <p id="inflight" class="budget">没有进行中的请求。</p>
-      <div class="event-table"><table><thead><tr><th>时间</th><th>请求</th><th>事件</th><th>详情</th></tr></thead><tbody id="events"><tr><td colspan="4" class="empty">尚无记录。开启接入后，这里会显示经过过滤器的请求。</td></tr></tbody></table></div>
+      <div class="event-table record-table" tabindex="0" role="region" aria-label="可滚动数据表"><table><caption class="sr-only">活动请求，最多保留 1000 条</caption><thead><tr><th>请求 / 模型</th><th>阶段</th><th>时间 / 耗时</th><th>观测与策略</th><th>重试</th><th>Token</th></tr></thead><tbody id="active-rows"></tbody></table></div>
     </section>
-    <section id="notes" class="notes"><h2>使用前了解</h2><p>首次接入或恢复地址后，Codex 可能需要重开才能读取配置。关闭这个网页不会停止服务，再次双击 EXE 可重新打开。不要与旧版过滤器同时接管同一份配置。</p><p>消息正文、工具结果、call_id、认证保护和请求大小限制不会因为选项切换被删除或关闭。WebSocket 暂不支持。</p><div class="form-footer"><span>退出会恢复本程序改写的地址；有进行中的请求时需先等待结束。</span><button id="exit" type="button" class="danger">退出程序并恢复配置</button></div></section>
+    <section class="panel" aria-labelledby="recent-title"><div class="section-heading"><div><h2 id="recent-title">最近结束</h2><p>最多 200 条，最新结束在前；记录与分钟曲线仅在当前进程内保留，重启后清空。</p></div></div><div class="event-table record-table" tabindex="0" role="region" aria-label="可滚动数据表"><table><caption class="sr-only">最近结束的请求</caption><thead><tr><th>请求 / 模型</th><th>结果 / 错误</th><th>时间 / 耗时</th><th>观测与策略</th><th>重试</th><th>Token</th></tr></thead><tbody id="recent-rows"></tbody></table></div></section>
+    <section class="panel" aria-labelledby="events-title"><div class="section-heading"><div><h2 id="events-title">诊断事件</h2><p>显示最近 60 条事件；错误代码可能属于已恢复的尝试。</p></div></div>
+      <div class="event-table" tabindex="0" role="region" aria-label="可滚动数据表"><table><thead><tr><th>时间</th><th>请求</th><th>事件</th><th>详情</th></tr></thead><tbody id="events"><tr><td colspan="4" class="empty">尚无记录。开启接入后，这里会显示经过过滤器的请求。</td></tr></tbody></table></div>
+    </section>
+    <section class="panel" aria-labelledby="diagnostics-title"><div class="section-heading"><div><h2 id="diagnostics-title">记录与持久化诊断</h2><p>诊断计数属于当前控制器生命周期，不是今日请求数；异常不会阻塞转发。</p></div></div><dl id="diagnostics" class="diagnostic-list"></dl></section>
+    </div>
+    <div id="page-help" class="help-page" hidden>
+      <section class="panel"><h2>接入与退出</h2><ol><li>确认 Magpie 地址与 Codex 配置文件，保存接入设置，再开启核心过滤。</li><li>首次接入、更换端口或恢复地址后，重开 Codex 让它读取配置。不要与旧版同时接管同一份配置。</li><li>关闭核心是字节直通，不清理、不重试、不暂存，也不解析响应获取 Token；不等于断开接入。</li><li>断开或退出会恢复本程序改写的地址。网页关闭不停止服务，再次双击 EXE 可重新打开。</li></ol><p>网页端口和管理令牌保存后仅在下次启动生效；当前令牌继续可用。请保留配置与恢复文件，不要公开令牌。</p></section>
+      <section class="panel"><h2>如何选择响应交付</h2><dl class="guide-list"><dt>整轮暂存（默认）</dt><dd>等本轮成功再交付正文与工具事件；失败尝试不交付，可在预算内恢复。手工配置的两个保护布尔值均为 true 时也优先暂存。</dd><dt>保护首段流式</dt><dd>在首次内容增量前检查并恢复早期错误，然后持续流式交付。首次内容交付后不再重试、清理或重放工具；晚期失败仍记作失败，不因 HTTP 200 视为成功。</dd><dt>直接流式</dt><dd>即时转发，不拦截流内错误；开始实际交付后无法重试或撤回工具事件。</dd></dl><p>暂存与首段保护的交付前缓存最多 64 MiB。保活只在核心启用且尚未实际交付时发送空进度，不改变模型生成速度。设置仅作用于新请求，执行中的请求保留原策略。</p></section>
+      <section class="panel"><h2>历史清理与恢复边界</h2><p>暴力清理先移除历史推理与可移除 ID；条件清理先保留，在明确的资源归属或有效 HTTP 400 invalid_encrypted_content 错误后才清理；不清理始终保留历史，但仍使用已启用的其他恢复。</p><p>Magpie 的 store、上下文与压缩委托保持不变；消息正文、工具结果与 call_id 配对不会因为切换选项被删除。实际条件清理才使用安全移除规则。</p><p>网络处理覆盖连接失败、空闲超时、明确断连、中继错误 cc_switch_forward_failed / bad_response / server_error，以及未归类的 JSON 对象 HTTP 5xx；不是任意 HTML 5xx。流式中断与无详情失败使用独立开关，ALB 400 只匹配已知网关页。</p><p>HTTP 401/403、鉴权、权限、账单、余额、配额和无效参数等业务错误不进入通用网关重试；历史密文错误也不会被通用 5xx 兜底绕过。关闭一类处理不会转入另一类继续重试。</p><p>资源最多 5 次、临时限流最多 20 次、网络 / 中继 / 断流共享最多 10 次、无渠道最多 10 次；每个请求合计最多额外 20 次，期限 30 分钟。遵守 Retry-After 最小等待，取消立即终止等待，交付后永不重放。WebSocket 暂不支持。</p></section>
+      <section class="panel"><h2>如何阅读指标</h2><p>开始、完成、使用量和重试各按发生时的本地日期计入；跨午夜的活动请求不会中断。首次实际交付与总时长包含上传；分布提供区间与均值，不生成虚构的百分位。</p><p>Token 仅计有效 response.completed.usage，核心关闭、缺失或检查不可用时显示未观测，而非零。可选总量与缓存字段只覆盖实际提供该字段的观测；有效观测的零仍为零。这不是账单，也不承诺速度、成本或恢复率改善。</p><p>日汇总每分钟及正常退出时写入本地 metrics.json，同日本机重启可恢复；曲线与最近请求只在内存，重启清空。异常退出可能丢失上次检查点后的数据与排队日志，原子替换不是断电保证。</p><p>曲线最多保留最近 180 分钟有事件的窗口，活动记录最多 1000 条，结束记录最多 200 条；超限或日志丢弃会显示诊断。计数不包含请求正文、响应正文、密钥或工具数据。</p></section>
+    </div>
     </div>
     <footer>Magpie Filter <span>本地控制 · 无远程资源 · 不接触账号密钥</span></footer>
   </main>
