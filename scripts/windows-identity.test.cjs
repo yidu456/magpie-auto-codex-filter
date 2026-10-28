@@ -68,16 +68,17 @@ test('native resource helper edits only a fresh owned Windows copy before inject
 });
 
 test('actual Windows resources and controlled launched image identify only the copied native executable', {skip: process.platform !== 'win32', timeout: 30000}, async t => {
-  const {copyNativeExecutable} = require('./windows-identity.cjs');
+  const {copyNativeExecutable, numericVersion} = require('./windows-identity.cjs');
+  const version = require('../package.json').version, expectedVersion = numericVersion(version);
   const output = path.join(fixture(t), 'MagpieFilter.exe'), before = fs.readFileSync(process.execPath);
-  copyNativeExecutable(process.execPath, output, require('../package.json').version);
+  copyNativeExecutable(process.execPath, output, version);
   const script = '$v = [Diagnostics.FileVersionInfo]::GetVersionInfo($env:MAGPIE_IDENTITY_FIXTURE); $v | Select-Object FileDescription,ProductName,InternalName,OriginalFilename,FileVersion,ProductVersion | ConvertTo-Json -Compress';
   const result = spawnSync(path.join(process.env.WINDIR, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
     ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
     {encoding: 'utf8', windowsHide: true, timeout: 15000, env: {...process.env, MAGPIE_IDENTITY_FIXTURE: output}});
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), {FileDescription: 'Magpie Filter', ProductName: 'Magpie Filter',
-    InternalName: 'MagpieFilter', OriginalFilename: 'MagpieFilter.exe', FileVersion: '0.1.0.0', ProductVersion: '0.1.0.0'});
+    InternalName: 'MagpieFilter', OriginalFilename: 'MagpieFilter.exe', FileVersion: expectedVersion, ProductVersion: expectedVersion});
   assert.deepEqual(fs.readFileSync(process.execPath), before);
   const child = spawn(output, ['-e', 'setInterval(() => {}, 1000)'], {windowsHide: true, stdio: 'ignore'});
   const ended = new Promise(resolve => { child.once('exit', resolve); child.once('error', resolve); });
