@@ -229,7 +229,7 @@ test('wall-clock rollback cannot enlarge native release inspection timeouts', as
   assert.ok(timeouts.every(timeout => Number.isInteger(timeout) && timeout > 0 && timeout <= 5000));
 });
 
-function linuxFixture({user = '1000', ownerUser = user, procName = 'fixture', inaccessible = false, duplicate = false, killError = null, replacement = null, lateReplacement = false} = {}) {
+function linuxFixture({user = '1000', ownerUser = user, procName = 'fixture', inaccessible = false, duplicate = false, killError = null, replacement = null, lateReplacement = false, metadataReplacement = null} = {}) {
   let live = true;
   const kills = [], signals = [];
   let socketReads = 0, lateChanged = false;
@@ -243,7 +243,10 @@ function linuxFixture({user = '1000', ownerUser = user, procName = 'fixture', in
     if (file === '/proc/322/stat') return stat(322, 111, 'second', 7654322);
     if (file === '/proc/100/stat') return stat(100, 99, 'node', 500);
     if (file === '/proc/99/stat') { if (lateReplacement && socketReads >= 3) lateChanged = true; return stat(99, 1, 'shell', 400); }
-    if (/^\/proc\/32[12]\/status$/.test(file)) return `Name:\tfixture\nUid:\t${ownerUser}\t${ownerUser}\t${ownerUser}\t${ownerUser}\n`;
+    if (/^\/proc\/32[12]\/status$/.test(file)) {
+      if (metadataReplacement === 'status' && socketReads >= 3) lateChanged = true;
+      return `Name:\tfixture\nUid:\t${ownerUser}\t${ownerUser}\t${ownerUser}\t${ownerUser}\n`;
+    }
     throw Object.assign(new Error('unavailable'), {code: 'ENOENT'});
   };
   const adapter = createPortOwner({platform: 'linux', currentPid: 100, currentPpid: 99, currentUser: user, readFile,
@@ -252,7 +255,13 @@ function linuxFixture({user = '1000', ownerUser = user, procName = 'fixture', in
       if (directory === '/proc/321/fd' && !inaccessible) return ['7'];
       if (directory === '/proc/322/fd') return ['8'];
       throw Object.assign(new Error('denied'), {code: 'EACCES'});
-    }, readlink: async file => file.endsWith('/exe') ? '/opt/fixture' : 'socket:[12345]',
+    }, readlink: async file => {
+      if (file.endsWith('/exe')) {
+        if (metadataReplacement === 'exe' && socketReads >= 3) lateChanged = true;
+        return '/opt/fixture';
+      }
+      return 'socket:[12345]';
+    },
     killProcess: (pid, signal) => { if (killError) throw Object.assign(new Error('denied SECRET'), {code: killError}); kills.push(pid); signals.push(signal); live = false; }, sleep: async () => {}});
   return {adapter, kills, signals};
 }
@@ -285,6 +294,15 @@ test('Linux shared sockets are ambiguous, final start revalidation rejects reuse
   await assert.rejects(denied.adapter.terminate(18193, owner), {code: 'PORT_TERMINATION_DENIED'});
   assert.equal(denied.kills.length, 0);
 });
+
+for (const metadataReplacement of ['status', 'exe']) {
+  test(`Linux replacement during final ${metadataReplacement} read cannot retain the old start identity`, async () => {
+    const {adapter, kills} = linuxFixture({metadataReplacement});
+    const owner = (await adapter.inspect(18193)).owner;
+    await assert.rejects(adapter.terminate(18193, owner), {code: 'PORT_OWNER_CHANGED'});
+    assert.equal(kills.length, 0);
+  });
+}
 
 test('Linux root, inaccessible socket ownership and hostile process names cannot be terminated', async () => {
   for (const [options, reason] of [[{ownerUser: '0'}, 'PROTECTED_PROCESS'], [{inaccessible: true}, 'OWNERSHIP_UNAVAILABLE'], [{procName: 'bad\nname'}, 'IDENTITY_UNAVAILABLE']]) {

@@ -251,8 +251,9 @@ function createPortOwner({platform = process.platform, currentPid = process.pid,
     return bounded(await runCommand(powershell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(setup + data + windowsHelper, 'utf16le').toString('base64')], {...commandOptions, timeout}));
   }
   async function linuxIdentity(pid, boot) {
-    const [stat, status, executable] = await Promise.all([readFile(`/proc/${pid}/stat`), readFile(`/proc/${pid}/status`), readlink(`/proc/${pid}/exe`)]);
-    const record = parseProcStat(stat, pid);
+    const [status, executable] = await Promise.all([readFile(`/proc/${pid}/status`), readlink(`/proc/${pid}/exe`)]);
+    // Read start identity last; pending metadata must not preserve an earlier process identity.
+    const record = parseProcStat(await readFile(`/proc/${pid}/stat`), pid);
     const uid = /^Uid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$/m.exec(bounded(status));
     return {pid, ...record, executable, started: boot + ':' + record.started,
       user: uid && uid.slice(1).every(value => value === uid[1]) ? uid[1] : null, critical: false};
