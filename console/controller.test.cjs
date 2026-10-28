@@ -25,11 +25,12 @@ async function setup(t) {
   return {runtime, configPath, original, controller, settings, up, origin: 'http://127.0.0.1:' + port};
 }
 
-test('console starts inert, attaches on enable, bypasses on disable, restores on disconnect', async t => {
+test('console starts inert, explicitly connects, bypasses on core disable, restores on disconnect', async t => {
   const h = await setup(t), c = h.controller;
   assert.equal(c.status().settings.policy.enabled, false);
   assert.equal(fs.readFileSync(h.configPath, 'utf8'), h.original);
   await c.update({revision: 0, settings: {...h.settings, policy: {...h.settings.policy, enabled: true}}});
+  await c.connect({revision: c.status().revision});
   assert.equal(c.status().attached, true);
   assert.match(fs.readFileSync(h.configPath, 'utf8'), new RegExp(':' + h.settings.port + '/magpie/v1'));
   await c.update({revision: c.status().revision, settings: {...c.status().settings, policy: {...c.status().settings.policy, enabled: false}}});
@@ -47,6 +48,7 @@ test('settings validation, stale writes and endpoint replacement cannot corrupt 
     await assert.rejects(c.update({revision: 0, settings: {...h.settings, ...patch}}));
   }
   await c.update({revision: 0, settings: {...h.settings, policy: {...h.settings.policy, enabled: true}}});
+  await c.connect({revision: c.status().revision});
   await assert.rejects(c.update({revision: 0, settings: h.settings}), /changed|revision/i);
   await assert.rejects(c.update({revision: c.status().revision, settings: {...c.status().settings, port: h.settings.port + 1}}), /disconnect/i);
   assert.equal(c.status().settings.port, h.settings.port);
@@ -70,19 +72,23 @@ test('omitting the core policy cannot implicitly enable interception', async t =
   assert.equal(h.controller.status().connected, false);
 });
 
-test('activation write failure rolls back config and keeps saved preferences unchanged', async t => {
+test('activation journal write failure rolls back listener and keeps saved preferences unchanged', async t => {
   const h = await setup(t);
-  const config = path.join(h.runtime, 'MagpieFilter.config.json');
-  fs.renameSync(config, config + '.saved'); fs.mkdirSync(config);
-  await assert.rejects(h.controller.update({revision: 0, settings: {...h.settings, policy: {...h.settings.policy, enabled: true}}}));
+  await h.controller.update({revision: 0, settings: h.settings});
+  const config = path.join(h.runtime, 'MagpieFilter.config.json'), before = fs.readFileSync(config, 'utf8');
+  fs.mkdirSync(path.join(h.runtime, 'connection.json'));
+  await assert.rejects(h.controller.connect({revision: 1}));
+  fs.rmdirSync(path.join(h.runtime, 'connection.json'));
   assert.equal(fs.readFileSync(h.configPath, 'utf8'), h.original);
   assert.equal(h.controller.status().connected, false);
-  assert.equal(h.controller.status().revision, 0);
+  assert.equal(h.controller.status().revision, 1);
+  assert.equal(fs.readFileSync(config, 'utf8'), before);
 });
 
 test('unowned edits still pointing at the filter prevent unsafe shutdown', async t => {
   const h = await setup(t), c = h.controller;
   await c.update({revision: 0, settings: {...h.settings, policy: {...h.settings.policy, enabled: true}}});
+  await c.connect({revision: c.status().revision});
   const attached = fs.readFileSync(h.configPath, 'utf8');
   fs.writeFileSync(h.configPath, attached.replace('/magpie/v1', '/user-edited/v1'));
   try {
@@ -96,7 +102,8 @@ test('port conflicts never change the client or claim the other listener', async
   const h = await setup(t), other = http.createServer((req, res) => res.end('other'));
   t.after(() => close(other));
   await new Promise(resolve => other.listen(h.settings.port, '127.0.0.1', resolve));
-  await assert.rejects(h.controller.update({revision: 0, settings: {...h.settings, policy: {...h.settings.policy, enabled: true}}}), /EADDRINUSE/);
+  await h.controller.update({revision: 0, settings: h.settings});
+  await assert.rejects(h.controller.connect({revision: h.controller.status().revision}), /EADDRINUSE/);
   assert.equal(fs.readFileSync(h.configPath, 'utf8'), h.original);
   assert.equal((await call(h.origin, '/', {method: 'GET'})).body, 'other');
 });
@@ -106,29 +113,33 @@ test('activation cannot adopt an unowned preexisting filter URL even when its po
   const unowned = h.original.replace(h.settings.upstream + '/v1', h.origin + '/magpie/v1');
   fs.writeFileSync(h.configPath, unowned);
   try {
-    await assert.rejects(c.update({revision: 0, settings: {...h.settings, policy: {...h.settings.policy, enabled: true}}}), /unowned|backup/i);
+    await c.update({revision: 0, settings: h.settings});
+    await assert.rejects(c.connect({revision: c.status().revision}), /unowned|backup/i);
     assert.equal(c.status().connected, false);
     await assert.rejects(call(h.origin, '/magpie/v1/responses', {body: '{}'}));
     assert.equal(fs.readFileSync(h.configPath, 'utf8'), unowned);
   } finally { fs.writeFileSync(h.configPath, h.original); }
 });
 
-test('exit preserves startup preference and explicit restart loads the saved policy', async t => {
+test('exit preserves saved bytes and fresh restart keeps core off while retaining other policy choices', async t => {
   const h = await setup(t), c = h.controller;
   await c.update({revision: 0, settings: {...h.settings, policy: {...h.settings.policy, enabled: true, cleanup: 'never'}}});
+  await c.connect({revision: c.status().revision});
   fs.writeFileSync(h.configPath, h.original.replace(h.settings.upstream, 'http://127.0.0.1:12345'));
   await c.close();
   assert.match(fs.readFileSync(h.configPath, 'utf8'), /12345/);
   const reopened = require('./controller.cjs').createController({runtime: h.runtime});
   t.after(() => reopened.close());
   await reopened.start();
-  assert.equal(reopened.status().settings.policy.enabled, true);
+  assert.equal(reopened.status().settings.policy.enabled, false);
+  assert.equal(reopened.status().connected, false);
   assert.equal(reopened.status().settings.policy.cleanup, 'never');
 });
 
 test('web edits persist in the portable config; disk edits block stale saves but not safe exit', async t => {
   const h = await setup(t), c = h.controller;
   await c.update({revision: 0, settings: {...h.settings, policy: {...h.settings.policy, enabled: true}}});
+  await c.connect({revision: c.status().revision});
   const file = path.join(h.runtime, 'MagpieFilter.config.json');
   const config = JSON.parse(fs.readFileSync(file));
   assert.equal(config.settings.policy.enabled, true);
@@ -141,7 +152,7 @@ test('web edits persist in the portable config; disk edits block stale saves but
   assert.equal(fs.readFileSync(h.configPath, 'utf8'), h.original);
 });
 
-test('manual enabled config starts correctly and close restores without erasing startup setting', async t => {
+test('manual enabled config starts web-only and close preserves its saved bytes', async t => {
   const h = await setup(t), file = path.join(h.runtime, 'MagpieFilter.config.json');
   await h.controller.close();
   const config = JSON.parse(fs.readFileSync(file));
@@ -149,7 +160,8 @@ test('manual enabled config starts correctly and close restores without erasing 
   fs.writeFileSync(file, JSON.stringify(config));
   const c = require('./controller.cjs').createController({runtime: h.runtime});
   t.after(() => c.close()); await c.start();
-  assert.equal(c.status().attached, true);
+  assert.equal(c.status().attached, false);
+  assert.equal(c.status().settings.policy.enabled, false);
   assert.equal(c.status().settings.policy.cleanup, 'always');
   await c.close();
   assert.equal(JSON.parse(fs.readFileSync(file)).settings.policy.enabled, true);
@@ -168,7 +180,7 @@ test('web port-only save retains pending token rotation without returning creden
   assert.equal(JSON.stringify(c.status()).includes(pending), false);
 });
 
-test('failed automatic activation stays diagnosable and allows retry with an available port', async t => {
+test('startup never inspects an occupied port; explicit connect remains diagnosable and retryable', async t => {
   const h = await setup(t), file = path.join(h.runtime, 'MagpieFilter.config.json');
   await h.controller.close();
   const occupied = http.createServer();
@@ -180,10 +192,14 @@ test('failed automatic activation stays diagnosable and allows retry with an ava
   const c = require('./controller.cjs').createController({runtime: h.runtime});
   t.after(() => c.close());
   await c.start();
+  assert.equal(c.status().state, 'idle');
+  assert.equal(c.status().portConflict, null);
+  await assert.rejects(c.connect({revision: c.status().revision}), /EADDRINUSE/);
   assert.equal(c.status().state, 'needs-attention');
   assert.match(c.status().lastError, /EADDRINUSE/);
   assert.equal(fs.readFileSync(h.configPath, 'utf8'), h.original);
   await c.update({revision: c.status().revision, settings: {...c.status().settings, port: h.settings.port}});
+  await c.connect({revision: c.status().revision});
   assert.equal(c.status().attached, true);
 });
 
@@ -203,13 +219,14 @@ test('recovery journal restores a crashed attachment before accepting new config
   assert.equal(fs.existsSync(path.join(h.runtime, 'connection.json')), false);
 });
 
-test('disconnect refuses active uploads and failed restoration keeps the proxy available', async t => {
+test('normal close refuses active uploads while failed restoration keeps the proxy available', async t => {
   const h = await setup(t), c = h.controller;
   await c.update({revision: 0, settings: {...h.settings, policy: {...h.settings.policy, enabled: true}}});
+  await c.connect({revision: c.status().revision});
   const req = http.request(h.origin + '/v1/responses', {method: 'POST', headers: {'content-length': 10}});
   req.on('error', () => {}); req.write('{');
   await new Promise(resolve => setTimeout(resolve, 50));
-  await assert.rejects(c.disconnect(), /active|request/i);
+  await assert.rejects(c.close(), /active|request/i);
   req.destroy();
   await new Promise(resolve => setTimeout(resolve, 50));
   const attached = fs.readFileSync(h.configPath, 'utf8');
@@ -236,6 +253,7 @@ test('metrics retain namespaced lifecycles across reconnect, observed tokens and
   const send = () => call(h.origin, '/v1/responses', {body: JSON.stringify({model: 'mock', stream: true,
     input: [{role: 'user', content: 'secret-prompt'}]}), headers: {authorization: 'Bearer secret-credential', connection: 'close'}});
   await c.update({revision: 0, settings: {...h.settings, policy: {...h.settings.policy, enabled: true}}});
+  await c.connect({revision: c.status().revision});
   let revision = c.status().revision;
   assert.equal((await send()).status, 200);
   assert.equal(c.status().revision, revision);
@@ -243,6 +261,7 @@ test('metrics retain namespaced lifecycles across reconnect, observed tokens and
   assert.equal(c.status().metrics.totals.inputTokens, 12);
   await c.disconnect();
   await c.update({revision: c.status().revision, settings: {...c.status().settings, policy: {...c.status().settings.policy, enabled: true}}});
+  await c.connect({revision: c.status().revision});
   revision = c.status().revision; await send();
   const state = c.status(); assert.equal(state.revision, revision);
   assert.equal(state.metrics.totals.success, 2); assert.equal(state.metrics.totals.inputTokens, 24);
@@ -303,6 +322,7 @@ test('corrupt and oversize metrics never block startup and I/O failures stay dia
 test('failed safe restore leaves persistence timer and log writer usable until close is retried', async t => {
   const h = await setup(t), c = h.controller;
   await c.update({revision: 0, settings: {...h.settings, policy: {...h.settings.policy, enabled: true}}});
+  await c.connect({revision: c.status().revision});
   const attached = fs.readFileSync(h.configPath, 'utf8');
   fs.writeFileSync(h.configPath, attached.replace('/magpie/v1', '/edited/v1'));
   try {

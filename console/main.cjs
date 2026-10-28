@@ -120,12 +120,16 @@ async function main(args = process.argv.slice(2)) {
     if (readJson(ownerFile)?.instance === instance) { fs.unlinkSync(ownerFile); fs.rmdirSync(lock); }
   };
   let controller, server;
+  const sockets = new Set();
   const signal = async () => {
     try { await controller.close(); await exit(); }
     catch (error) { console.error('Console still running: ' + error.message); }
   };
   const exit = async () => {
-    if (server?.listening) await new Promise(resolve => { server.close(resolve); server.closeIdleConnections(); });
+    if (server?.listening) await new Promise(resolve => {
+      const deadline = setTimeout(() => { for (const socket of sockets) socket.destroy(); }, 250);
+      server.close(() => { clearTimeout(deadline); resolve(); }); server.closeIdleConnections();
+    });
     retire(); process.removeListener('SIGINT', signal); process.removeListener('SIGTERM', signal);
   };
   try {
@@ -136,9 +140,11 @@ async function main(args = process.argv.slice(2)) {
     const store = createConfigStore(options.configFile), {token, port, authEnabled} = store.current.web;
     const facade = {status: () => ({...controller.status(), application: {service: SERVICE, pid: process.pid, instance}}),
       update: value => controller.update(value), updateWeb: value => controller.updateWeb(value),
+      connect: value => controller.connect(value),
       resolvePortConflict: value => controller.resolvePortConflict(value),
       disconnect: () => controller.disconnect(), close: () => controller.close()};
     server = createManagementServer({controller: facade, token, authEnabled, assets: loadAssets(), onExit: () => exit().catch(error => console.error(error.message))});
+    server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
     await new Promise((resolve, reject) => {
       server.once('error', reject); server.listen(port, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
     });

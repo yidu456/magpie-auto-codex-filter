@@ -26,7 +26,7 @@ async (page, {screenshots = '.verification/task-4-browser', only} = {}) => {
   if (!only || only === 'navigation') {
     await visiblePage('dashboard');
     check(await page.locator('#connection-form').isHidden() && await page.locator('#delivery-mode').isHidden(), 'Home must show charts/core only, not other settings');
-    check(await page.locator('#page-dashboard input, #page-dashboard select, #page-dashboard button').count() === 1, 'Home contains controls other than core switch');
+    check(await page.locator('#page-dashboard input, #page-dashboard select, #page-dashboard button').count() === 2, 'Home must contain only gateway/core switches');
     await go('settings');
     for (const id of ['connection-form', 'web-form', 'modes', 'delivery-mode', 'exit']) check(await page.locator('#' + id).isVisible(), 'Settings control missing: ' + id);
     await page.locator('nav a[href="/?page=records"]').click(); await visiblePage('records');
@@ -74,18 +74,23 @@ async (page, {screenshots = '.verification/task-4-browser', only} = {}) => {
     await page.locator('#port').fill(String(fixture.settings.port));
     await page.locator('#upstream').fill(fixture.settings.upstream + '/draft');
     await page.waitForTimeout(1700); check(await page.locator('#upstream').inputValue() === fixture.settings.upstream + '/draft', 'Polling discarded connection draft');
-    await go('dashboard'); await page.locator('#enabled').click();
+    await go('dashboard'); await page.locator('#gateway').click();
     check((await page.locator('#notice').textContent()).includes('先保存'), 'Core ON accepted unsaved connection');
-    check(!await page.locator('#enabled').isChecked(), 'Core ON did not roll back');
+    check(!await page.locator('#gateway').isChecked(), 'Gateway ON did not roll back');
     await go('settings'); await page.locator('#upstream').fill(fixture.settings.upstream); await page.locator('#save-connection').click(); await settled();
-    await go('dashboard'); await page.locator('#enabled').check();
+    await go('dashboard'); await page.locator('#enabled').check(); await settled();
+    check(!await page.locator('#gateway').isChecked(), 'Core preference must never start gateway');
+    check((await page.locator('#core-state').textContent()) === '未生效', 'Disconnected core must be inactive');
+    await page.locator('#gateway').check();
     await page.waitForFunction(() => document.getElementById('connection-state').textContent === '配置已接入');
     await go('settings'); check(await page.locator('#port').isDisabled(), 'Connected port must not be editable');
     await page.locator('[name=cleanup][value=never]').check(); await settled();
     check(await page.locator('[data-handler=encryptedContent]').isDisabled(), 'Cleanup handler exclusion lost');
     await go('dashboard'); await page.locator('#enabled').uncheck(); await settled();
     check((await page.locator('#core-description').textContent()).includes('直通'), 'Bypass guidance missing');
-    await go('settings'); await page.locator('#disconnect').click(); await settled();
+    await page.locator('#gateway').uncheck(); await settled();
+    check(!await page.locator('#enabled').isChecked(), 'Disconnect must preserve core choice');
+    await go('settings');
     await page.locator('#web-token').fill('cd'.repeat(32));
     const nextWebPort = [19385, 19386, 19387, 19388].find(port => ![fixture.web.port, fixture.settings.port, Number(new URL(fixture.settings.upstream).port)].includes(port));
     await page.locator('#web-port').fill(String(nextWebPort));

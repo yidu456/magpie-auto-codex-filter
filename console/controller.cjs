@@ -17,7 +17,8 @@ function createController({runtime, configStore, portOwner = createPortOwner()})
   fs.mkdirSync(runtime, {recursive: true});
   const file = name => path.join(runtime, name);
   const store = configStore || createConfigStore(path.join(runtime, 'MagpieFilter.config.json'));
-  let revision = store.current.revision, settings = store.current.settings;
+  let revision = store.current.revision;
+  let settings = {...store.current.settings, policy: {...store.current.settings.policy, enabled: false}};
   const activeWeb = store.current.web;
   let proxy, router, connection, timer, transitioning = false, closed = false, lastError = null;
   let consent = null, portConflictPending = false;
@@ -133,17 +134,37 @@ function createController({runtime, configStore, portOwner = createPortOwner()})
     return result;
   };
   const mutate = fn => { consent = null; return serial(() => { consent = null; return fn(); }); };
-  const stopListener = async () => {
+  const startRouterTimer = () => {
     clearInterval(timer);
-    if (proxy?.listening) await new Promise(resolve => { proxy.close(resolve); proxy.closeIdleConnections(); });
+    timer = setInterval(() => {
+      if (transitioning || closed) return;
+      try { router.sync(); lastError = null; }
+      catch (error) { lastError = error.message; }
+    }, 1000);
+    timer.unref();
+  };
+  const stopListener = async (force = false) => {
+    clearInterval(timer);
+    if (proxy?.listening) await new Promise(resolve => {
+      proxy.close(resolve);
+      if (force) proxy.closeAllConnections(); else proxy.closeIdleConnections();
+    });
+    // HTTP close can resolve before response close events finish upstream/timer cancellation.
+    if (force && proxy) {
+      const deadline = Date.now() + 2000;
+      while (proxy.stats.activeRequests) {
+        if (Date.now() >= deadline) throw new Error('Gateway cancellation did not settle. Preserve recovery files and retry disconnect.');
+        await new Promise(resolve => setTimeout(resolve, 5));
+      }
+    }
     proxy = null;
   };
-  const validateUpdate = ({revision: expected, settings: value, ...extra} = {}, startup = false) => {
+  const validateUpdate = ({revision: expected, settings: value, ...extra} = {}) => {
     if (closed) throw new Error('Console is closed.');
     if (Object.keys(extra).length) throw new Error('Invalid update fields.');
     if (expected !== revision) throw new Error('Settings changed in another tab. Reload before saving (revision conflict).');
     store.checkUnchanged();
-    const next = store.validate({settings: value}, revision + (startup ? 0 : 1)).settings;
+    const next = store.validate({settings: value}, revision + 1).settings;
     if (next.port === activeWeb.port || Number(new URL(next.upstream).port || 80) === activeWeb.port) {
       throw new Error('Filter and upstream cannot use the active web port.');
     }
@@ -162,10 +183,10 @@ function createController({runtime, configStore, portOwner = createPortOwner()})
       throw new Error('An unowned filter URL already exists in this config. Restore it from the original installation first.');
     }
   };
-  const apply = async (value, startup = false) => {
-    const next = validateUpdate(value, startup);
+  const apply = async (value, connecting = false) => {
+    const next = validateUpdate(value);
     transitioning = true;
-    const fresh = next.policy.enabled && !proxy;
+    const fresh = connecting && !proxy;
     let attachmentAttempted = false;
     try {
       if (fresh) {
@@ -199,16 +220,9 @@ function createController({runtime, configStore, portOwner = createPortOwner()})
         attachmentAttempted = true;
         router.sync();
       }
-      if (!startup) persist(next, revision + 1);
-      settings = next; if (!startup) revision++; lastError = null; consent = null;
-      if (fresh) {
-        timer = setInterval(() => {
-          if (transitioning || closed) return;
-          try { router.sync(); lastError = null; }
-          catch (error) { lastError = error.message; }
-        }, 1000);
-        timer.unref();
-      }
+      if (!connecting) persist(next, revision + 1);
+      settings = next; revision++; lastError = null; consent = null;
+      if (fresh) startRouterTimer();
       log('settings-applied', {policyRevision: revision, enabled: settings.policy.enabled, cleanup: settings.policy.cleanup});
     } catch (error) {
       if (fresh && proxy) {
@@ -224,19 +238,20 @@ function createController({runtime, configStore, portOwner = createPortOwner()})
     } finally { transitioning = false; }
     return status();
   };
-  const disconnectInternal = async (preservePreference = false) => {
-    if (proxy?.stats.activeRequests) throw new Error('There are active requests. Wait for completion or cancel them in the client first.');
+  const disconnectInternal = async (force = false) => {
+    if (!force && proxy?.stats.activeRequests) throw new Error('There are active requests. Force disconnect first or cancel them in the client.');
     if (!connection && !fs.existsSync(file('connection.json'))) return status();
     if (!connection) throw new Error('Recovery journal is invalid. Preserve runtime files and repair the journal before exiting.');
     transitioning = true;
     try {
+      clearInterval(timer);
       restore();
-      const next = validateSettings({...settings, policy: {...settings.policy, enabled: false}}, revision + 1);
-      if (!preservePreference) persist(next, revision + 1);
-      settings = next; revision++;
-      await stopListener(); retireJournal(); connection = router = null; lastError = null;
+      await stopListener(force); retireJournal(); connection = router = null; lastError = null; revision++;
       log('disconnected');
-    } catch (error) { lastError = error.message; throw error; }
+    } catch (error) {
+      if (proxy?.listening) startRouterTimer();
+      lastError = error.message; throw error;
+    }
     finally { transitioning = false; }
     return status();
   };
@@ -255,7 +270,7 @@ function createController({runtime, configStore, portOwner = createPortOwner()})
     if (!value.confirm) return status();
     try {
       const next = validateUpdate({revision, settings: confirmed.settings});
-      if (!next.policy.enabled || proxy) throw new Error('Connection changed. Retry activation.');
+      if (proxy) throw new Error('Connection changed. Retry activation.');
       checkUnowned(next);
       // Repeat normal activation's address-backup ownership validation before any destructive work.
       makeRouter(next);
@@ -266,18 +281,21 @@ function createController({runtime, configStore, portOwner = createPortOwner()})
         if (error.code === 'PORT_OWNER_CHANGED') throw offerConflict(next, error.conflict || await portOwner.inspect(next.port), error.code);
         throw error;
       }
-      await apply({revision, settings: next});
+      await apply({revision, settings: next}, true);
     } catch (error) { lastError = error.message; throw error; }
     finally { transitioning = portConflictPending = false; }
     return status();
   });
   return {status, resolvePortConflict, update: value => mutate(() => apply(value)),
-    start: () => mutate(async () => {
-      try { if (settings.policy.enabled) await apply({revision, settings}, true); }
-      catch (error) { lastError = lastError || error.message; }
-      // Recovery/activation failures must leave a reachable console for diagnosis and exit.
-      return status();
+    connect: value => mutate(() => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)
+        || Object.keys(value).length !== 1 || !Object.hasOwn(value, 'revision')
+        || !Number.isSafeInteger(value.revision)) throw new Error('Invalid connect fields.');
+      if (value.revision !== revision) throw new Error('Settings changed in another tab (revision conflict).');
+      if (proxy) { validateUpdate({revision, settings}); return status(); }
+      return apply({revision, settings}, true);
     }),
+    start: () => mutate(() => status()),
     updateWeb: ({revision: expected, web, ...extra}) => mutate(() => {
       if (closed || Object.keys(extra).length || expected !== revision) throw new Error('Settings revision changed or console is closed.');
       if (!web || typeof web !== 'object' || Array.isArray(web)) throw new Error('Invalid web settings.');
@@ -288,9 +306,9 @@ function createController({runtime, configStore, portOwner = createPortOwner()})
       store.save({web}, revision + 1); revision++;
       return status();
     }),
-    disconnect: () => mutate(() => disconnectInternal()), close: () => mutate(async () => {
+    disconnect: () => mutate(() => disconnectInternal(true)), close: () => mutate(async () => {
     if (closed) return;
-    await disconnectInternal(true); closed = true;
+    await disconnectInternal(); closed = true;
     clearInterval(metricsTimer); persistence.timerActive = false;
     if (metricsSave) await metricsSave;
     await saveMetrics(); await writer.close();

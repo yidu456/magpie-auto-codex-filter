@@ -99,6 +99,9 @@ async function main({executable} = {}) {
       settings: {...state.settings, upstream, port, configPath, policy: {...state.settings.policy, enabled: true, cleanup: 'always'}}})});
     assert.equal(applied.status, 200, applied.body);
     let current = JSON.parse(applied.body);
+    assert.equal(current.attached, false);
+    const connected = await call(record.origin, '/api/connect', {headers: controlHeaders, body: JSON.stringify({revision: current.revision})});
+    assert.equal(connected.status, 200, connected.body); current = JSON.parse(connected.body);
     assert.equal(current.attached, true);
     const proxyOrigin = 'http://127.0.0.1:' + port;
     assert.equal((await call(proxyOrigin, '/magpie/v1/responses', {body: '{"input":[{"type":"reasoning","encrypted_content":"mock"},{"role":"user","content":"hi"}]}'})).status, 200);
@@ -174,7 +177,7 @@ async function main({executable} = {}) {
     assert.equal(record.origin, 'http://127.0.0.1:' + nextWebPort);
     assert.equal(record.token, nextToken);
     current = JSON.parse((await call(record.origin, '/api/state', {method: 'GET', headers: {'x-console-token': nextToken}})).body);
-    assert.equal(current.attached, true); assert.equal(current.settings.policy.cleanup, 'never');
+    assert.equal(current.attached, false); assert.equal(current.settings.policy.enabled, false); assert.equal(current.settings.policy.cleanup, 'never');
     assert.deepEqual(current.metrics.totals, savedMetrics.totals);
     assert.deepEqual(current.metrics.retry, savedMetrics.retry);
     assert.deepEqual(current.metrics.latency, savedMetrics.latency);
@@ -213,7 +216,7 @@ async function main({executable} = {}) {
       fixtureFilterAndBypass: true, portableSettings: true, pendingWebRotation: true,
       literalOldConfigReadOnly: true, oldUnbufferedDirect: true, protectedFirstDelta: true, earlyRecovery: true,
       lateFailureNoReplay: true, aggregateOnlyRestore: true, copiedAlternateCwdNoNodePath: true, adjacentConfig: true,
-      editedStartupEnabled: true, exactRestore: true, cleanExit: true}));
+      editedStartupWebOnly: true, exactRestore: true, cleanExit: true}));
   } finally {
     releaseDelta?.();
     await stop().catch(() => {});

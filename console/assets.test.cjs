@@ -3,6 +3,15 @@ const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const {listen, close, call} = require('../magpie-auto-codex-filter/test-support.cjs');
 
+test('homepage has two independent accessible switches and all boolean preferences are switch styled', () => {
+  const html = require('./assets.cjs').loadAssets()['/'].body.toString();
+  for (const id of ['gateway', 'enabled', 'heartbeat', 'web-auth-enabled']) {
+    assert.match(html, new RegExp('<input[^>]*id="' + id + '"[^>]*role="switch"'));
+  }
+  assert.equal((html.match(/data-handler="[^"]+"[^>]*role="switch"/g) || []).length, 7);
+  assert.match(html, /网关关闭/); assert.match(html, /中断/);
+});
+
 test('the actual browser assets are served with safe types and no filesystem fallback', async t => {
   const assets = require('./assets.cjs').loadAssets();
   const server = require('./server.cjs').createManagementServer({token: 'test', assets, controller: {status: () => ({revision: 0})}});

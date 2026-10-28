@@ -45,11 +45,11 @@ async function main({executable, browserConsent = false, authEnabled = true} = {
       await page.locator('nav a[data-page=dashboard]').click();
     }
     const offer = async () => {
-      if (page) { await page.locator('#enabled').check(); await page.locator('#port-conflict-dialog').waitFor({state: 'visible'}); }
+      if (page) { await page.locator('#gateway').check(); await page.locator('#port-conflict-dialog').waitFor({state: 'visible'}); }
       else {
         const current = await state();
-        assert.equal((await request('/api/settings', {revision: current.revision,
-          settings: {...current.settings, port, policy: {...current.settings.policy, enabled: true}}})).status, 409);
+        if (current.settings.port !== port) assert.equal((await request('/api/settings', {revision: current.revision, settings: {...current.settings, port}})).status, 200);
+        assert.equal((await request('/api/connect', {revision: (await state()).revision})).status, 409);
       }
       const current = await state(), conflict = current.portConflict;
       assert.equal(current.connected, false); assert.equal(conflict?.port, port);
@@ -85,10 +85,9 @@ async function main({executable, browserConsent = false, authEnabled = true} = {
       // Display-only platforms require the user to quit the owner; simulate that only on our own child.
       child.kill('SIGKILL'); await bounded(ended, 5000);
       const latest = await state();
-      assert.equal((await request('/api/settings', {revision: latest.revision,
-        settings: {...latest.settings, port, policy: {...latest.settings.policy, enabled: true}}})).status, 200);
+      assert.equal((await request('/api/connect', {revision: latest.revision})).status, 200);
     }
-    current = await state(); assert.equal(current.connected, true); assert.equal(current.settings.policy.enabled, true);
+    current = await state(); assert.equal(current.connected, true); assert.equal(current.settings.policy.enabled, false);
     assert.equal((await request('/api/disconnect', {revision: current.revision})).status, 200);
     assert.equal(fs.readFileSync(current.settings.configPath, 'utf8'), original);
     current = await state(); assert.equal((await request('/api/exit', {revision: current.revision})).status, 200);

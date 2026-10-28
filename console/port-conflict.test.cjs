@@ -28,8 +28,9 @@ async function setup(t, {unsafe = false} = {}) {
     }};
   const controller = createController({runtime, portOwner}); t.after(() => controller.close());
   const settings = {...controller.status().settings, configPath, port,
-    policy: {...controller.status().settings.policy, enabled: true}};
-  const enable = () => controller.update({revision: controller.status().revision, settings});
+    policy: {...controller.status().settings.policy, enabled: false}};
+  await controller.update({revision: controller.status().revision, settings});
+  const enable = () => controller.connect({revision: controller.status().revision});
   const conflict = async () => {
     let error; try { await enable(); } catch (e) { error = e; }
     assert.equal(error?.code, 'PORT_CONFLICT');
@@ -85,10 +86,10 @@ test('confirmed original capability terminates once and uses ordinary activation
   const h = await setup(t), c = await h.conflict();
   const state = await h.resolve(c);
   assert.equal(state.connected, true); assert.equal(state.attached, true);
-  assert.equal(state.settings.policy.enabled, true); assert.equal(state.revision, 1);
+  assert.equal(state.settings.policy.enabled, false); assert.equal(state.revision, 2);
   assert.equal(state.portConflict, null); assert.equal(h.kills, 1);
   assert.equal(state.transitioning, false); assert.equal(state.portConflictPending, false);
-  assert.equal(JSON.parse(fs.readFileSync(state.configFile)).settings.policy.enabled, true);
+  assert.equal(JSON.parse(fs.readFileSync(state.configFile)).settings.policy.enabled, false);
   await assert.rejects(h.resolve(c), {code: 'PORT_CONFLICT_STALE'});
   assert.equal(h.kills, 1);
 });
@@ -116,8 +117,8 @@ test('disk edits, unowned endpoints and newly unresolved journal block kill', as
 test('settings, web changes, disconnect and close invalidate outstanding consent', async t => {
   for (const mutation of ['settings', 'web', 'disconnect', 'close']) {
     const h = await setup(t), c = await h.conflict();
-    if (mutation === 'settings') await h.controller.update({revision: 0, settings: {...h.settings, policy: {...h.settings.policy, enabled: false}}});
-    if (mutation === 'web') await h.controller.updateWeb({revision: 0, web: {port: 19285}});
+    if (mutation === 'settings') await h.controller.update({revision: h.controller.status().revision, settings: {...h.settings, policy: {...h.settings.policy, enabled: false}}});
+    if (mutation === 'web') await h.controller.updateWeb({revision: h.controller.status().revision, web: {port: 19285}});
     if (mutation === 'disconnect') await h.controller.disconnect();
     if (mutation === 'close') await h.controller.close();
     await assert.rejects(h.resolve(c), {code: 'PORT_CONFLICT_STALE'});
@@ -153,23 +154,25 @@ test('termination errors stay failed with consumed consent and honest pending cl
   const confirmation = h.resolve(c); await started;
   assert.equal(h.controller.status().transitioning, true);
   assert.equal(h.controller.status().portConflictPending, true);
+  const disconnecting = h.controller.disconnect(); let disconnected = false;
+  disconnecting.then(() => { disconnected = true; });
   const closing = h.controller.close(); let closed = false; closing.then(() => { closed = true; });
-  await new Promise(r => setImmediate(r)); assert.equal(closed, false);
-  release(); await confirmation; await closing;
+  await new Promise(r => setImmediate(r)); assert.equal(closed, false); assert.equal(disconnected, false);
+  release(); await confirmation; assert.equal((await disconnecting).connected, false); await closing;
   assert.equal(h.kills, 1); assert.equal(h.controller.status().state, 'closed');
   assert.equal(fs.readFileSync(h.configPath, 'utf8'), h.original);
 });
 
-test('startup conflict preserves enabled preference but never auto terminates or saves consent', async t => {
+test('legacy enabled startup remains web-only and never inspects or saves consent', async t => {
   const h = await setup(t); await h.controller.close();
   const filename = path.join(h.runtime, 'MagpieFilter.config.json');
-  const config = JSON.parse(fs.readFileSync(filename)); config.settings = h.settings;
+  const config = JSON.parse(fs.readFileSync(filename)); config.settings = {...h.settings, policy: {...h.settings.policy, enabled: true}};
   fs.writeFileSync(filename, JSON.stringify(config));
   const portOwner = {inspect: async () => h.metadata, terminate: async () => assert.fail('Startup cannot terminate')};
   const c = createController({runtime: h.runtime, portOwner}); t.after(() => c.close());
   const before = fs.readFileSync(filename, 'utf8'); const state = await c.start();
-  assert.equal(state.connected, false); assert.equal(state.settings.policy.enabled, true);
-  assert.equal(state.state, 'needs-attention'); assert.ok(state.portConflict.challenge);
+  assert.equal(state.connected, false); assert.equal(state.settings.policy.enabled, false);
+  assert.equal(state.state, 'idle'); assert.equal(state.portConflict, null);
   assert.equal(fs.readFileSync(filename, 'utf8'), before);
   assert.doesNotMatch(before, /challenge|force|private-start/);
 });
@@ -179,10 +182,10 @@ test('protected management conflict API enforces auth, strict body, 409 and yes/
   t.after(() => close(server)); const origin = await listen(server);
   const headers = {'x-console-token': 'test', 'content-type': 'application/json'};
   const post = (route, body, patch = {}) => call(origin, route, {headers: {...headers, ...patch}, body: JSON.stringify(body)});
-  const conflict = await post('/api/settings', {revision: 0, settings: h.settings});
+  const conflict = await post('/api/connect', {revision: h.controller.status().revision});
   assert.equal(conflict.status, 409); const c = JSON.parse(conflict.body).conflict;
   assert.equal(JSON.parse(conflict.body).code, 'PORT_CONFLICT');
-  const body = {revision: 0, challenge: c.challenge, confirm: true};
+  const body = {revision: c.revision, challenge: c.challenge, confirm: true};
   assert.equal((await call(origin, '/api/port-conflict', {method: 'GET', headers})).status, 404);
   assert.equal((await call(origin, '/api/port-conflict', {headers, body: 'x'.repeat(33000)})).status, 413);
   assert.equal((await call(origin, '/api/port-conflict', {headers, body: '{'})).status, 400);
@@ -196,7 +199,7 @@ test('protected management conflict API enforces auth, strict body, 409 and yes/
   assert.equal(h.kills, 0);
   assert.equal((await post('/api/port-conflict', {...body, confirm: false})).status, 200);
   assert.equal((await post('/api/port-conflict', body)).status, 409);
-  const fresh = JSON.parse((await post('/api/settings', {revision: 0, settings: h.settings})).body).conflict;
+  const fresh = JSON.parse((await post('/api/connect', {revision: h.controller.status().revision})).body).conflict;
   assert.equal((await post('/api/port-conflict', {...body, challenge: fresh.challenge})).status, 200);
   assert.equal(h.kills, 1);
 });

@@ -29,10 +29,9 @@ async function main({executable} = {}) {
   const ended = child => child.exitCode !== null || child.signalCode !== null;
   const duplicate = async () => { const child = launch(); await wait(() => ended(child)); assert.equal(child.exitCode, 0, child.output); };
   const restart = async child => {
-    // Chromium keeps speculative sockets open; close its pool before exercising process exit.
-    await browser.close(); browser = null;
     const result = await call(fixture.origin, '/api/exit', {headers: headers(), body: JSON.stringify({revision: (await state()).revision})});
     assert.equal(result.status, 200, result.body); await wait(() => ended(child)); assert.equal(child.exitCode, 0, child.output);
+    await browser.close(); browser = null;
     record = null; const next = launch(); record = await wait(readRecord);
     browser = await chromium.launch({headless: true, channel: process.env.BROWSER_CHANNEL || 'chrome'});
     page = await browser.newPage({viewport: {width: 1280, height: 1000}}); page.setDefaultTimeout(7000);
@@ -81,7 +80,7 @@ async function main({executable} = {}) {
       settings: {...current.settings, port: Number(new URL(occupiedOrigin).port)}})});
     assert.equal(saved.status, 200, saved.body);
     await page.goto(fixture.origin + '/'); await page.locator('#controls').waitFor({state: 'visible'});
-    await page.locator('#enabled').check(); await page.locator('#port-conflict-dialog').waitFor({state: 'visible'});
+    await page.locator('#gateway').check(); await page.locator('#port-conflict-dialog').waitFor({state: 'visible', timeout: 30000});
     assert.equal(await page.locator('#port-conflict-no').evaluate(el => el === document.activeElement), true);
     await page.keyboard.press('Escape'); await page.locator('#port-conflict-dialog').waitFor({state: 'hidden'});
     assert.equal((await state()).settings.policy.enabled, false);

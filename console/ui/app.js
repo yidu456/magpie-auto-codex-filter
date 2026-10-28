@@ -7,7 +7,7 @@ let state, busy = false, dirty = false, webDirty = false, exited = false, poll;
 let dialogConsent = null, consentTimer;
 const policyInputs = [...document.querySelectorAll('[name=cleanup], [data-handler]'), $('enabled'), $('delivery-mode'), $('heartbeat')];
 const deliveryModes = {full: {bufferResponse: true, protectStreamStart: false}, protected: {bufferResponse: false, protectStreamStart: true}, direct: {bufferResponse: false, protectStreamStart: false}};
-const pages = {dashboard: ['过滤控制台', '今日观测与核心开关，其他配置在设置页。'], settings: ['过滤设置', '接入、保护与交付偏好，仅作用于新请求。'], records: ['请求记录', '关注正在处理的阶段与最终结果，不保留模型正文。'], help: ['使用说明', '接入、恢复边界，以及指标能说明什么。']};
+const pages = {dashboard: ['过滤控制台', '今日观测与网关 / 核心开关，其他配置在设置页。'], settings: ['过滤设置', '接入、保护与交付偏好，仅作用于新请求。'], records: ['请求记录', '关注正在处理的阶段与最终结果，不保留模型正文。'], help: ['使用说明', '接入、恢复边界，以及指标能说明什么。']};
 function showPage(focus = false) {
   const query = new URLSearchParams(location.search).get('page');
   const page = Object.hasOwn(pages, query) ? query : 'dashboard';
@@ -184,7 +184,7 @@ function renderMetrics(metrics, diagnostics) {
   const recent = Array.isArray(metrics?.recent) ? metrics.recent.slice(0, 200).filter(record => record && typeof record === 'object') : [];
   const older = active.filter(record => finite(record.policyRevision) && record.policyRevision !== state.revision).length;
   $('request-count').textContent = metrics ? active.length + ' 条保留活动记录' : '记录不可用';
-  $('inflight').textContent = !metrics ? '请求观测不可用。' : active.length ? `保留 ${active.length} 条活动请求${older ? `，其中 ${older} 条仍使用旧版策略` : ''}。进行中的请求不会因切换而中断；超限未保留请求见诊断。` : '没有保留的活动请求。';
+  $('inflight').textContent = !metrics ? '请求观测不可用。' : active.length ? `保留 ${active.length} 条活动请求${older ? `，其中 ${older} 条仍使用旧版策略` : ''}。进行中的请求不因核心切换中断；关闭网关会强制中断；超限未保留请求见诊断。` : '没有保留的活动请求。';
   records('active-rows', active, true); records('recent-rows', recent);
   const logs = diagnostics?.logs, persistence = diagnostics?.persistence, recorder = metrics?.diagnostics;
   const warnings = [];
@@ -213,11 +213,15 @@ function render() {
   const settings = state.settings, policy = settings.policy;
   $('connection-state').textContent = states[state.state] || state.state;
   $('connection-state').classList.toggle('on', state.attached);
-  $('core-state').textContent = policy.enabled ? state.connected ? '已开启' : '待接入' : '已关闭';
+  $('gateway').checked = state.connected; $('gateway').disabled = working;
+  $('gateway-state').textContent = state.connected ? '已开启' : '已关闭';
+  $('gateway-lamp').classList.toggle('on', state.connected);
+  $('gateway-description').textContent = state.connected ? '网关已接入。关闭会先恢复地址，再强制中断活动请求，保留核心选择。' : '网关关闭，不监听、不接入。开启使用已保存的接入设置，与核心选择独立。';
+  $('core-state').textContent = policy.enabled ? state.connected ? '已开启' : '未生效' : '已关闭';
   $('core-lamp').classList.toggle('on', policy.enabled && state.connected);
-  $('core-description').textContent = policy.enabled && !state.connected ? '已保存启用偏好，但当前未接入。请先处理错误或修改接入设置。'
+  $('core-description').textContent = policy.enabled && !state.connected ? '核心已选开启，但网关关闭，当前未生效。开启网关后才处理新请求。'
     : policy.enabled ? '勾选的保护已启用。设置即时作用于新请求，进行中的请求保持原策略。'
-    : state.connected ? '当前已接入，但绕过过滤核心：请求直通 Magpie，不清理、不重试、不暂存。' : '尚未接入客户端。先确认接入设置，再开启核心过滤。';
+    : state.connected ? '当前已接入，但绕过过滤核心：请求直通 Magpie，不清理、不重试、不暂存。' : '网关与核心均关闭。可独立选择核心；只有开启网关才接入客户端。';
   if (!dirty) {
     $('client').value = settings.client; $('config-path').value = settings.configPath;
     $('upstream').value = settings.upstream; $('port').value = settings.port;
@@ -255,7 +259,7 @@ function render() {
   $('stream-warning').textContent = mode === 'protected' ? '保护首段只恢复交付前的早期错误。首次内容交付后不再重试、清理或重放工具；晚期失败仍记作失败。' : '直接流式不拦截流内错误，开始转发后不再重试，也无法撤回已交付的工具事件。';
   $('revision').textContent = '已生效 · 版本 ' + state.revision;
   renderMetrics(state.metrics, state.diagnostics);
-  $('connection-hint').textContent = dirty ? '有未保存的接入设置。保存后再开启总开关。'
+  $('connection-hint').textContent = dirty ? '有未保存的接入设置。保存后再开启网关。'
     : state.connected ? '已连接：改端口前先断开并恢复，重新接入后重启 Codex。' : '默认端口 18184，可更改。更改端口并重新接入后，需要重启 Codex。';
   const body = $('events'); body.replaceChildren();
   const recent = (state.events || []).slice(-60).reverse();
@@ -297,7 +301,7 @@ async function resolveConsent(confirm) {
   $('port-conflict-progress').textContent = confirm ? '正在重新核对进程并等待端口释放，请勿重复操作。已发出的操作不会因网页断开而撤销。' : '正在取消确认，不会结束进程。';
   try {
     state = await api('/api/port-conflict', {revision: consent.revision, challenge: consent.challenge, confirm});
-    notice(confirm ? '已开启过滤。新请求使用已保存的策略。' : '已保留占用进程，启用偏好未改变。');
+    notice(confirm ? '网关已开启。新请求使用当前核心选择。' : '已保留占用进程，启用偏好未改变。');
   } catch (error) {
     fresh = error.conflict;
     notice('未完成：' + error.message + (error.status ? '' : '。请求结果尚未确认；已发出的操作不会因网页断开而撤销。'), true);
@@ -310,7 +314,7 @@ $('port-conflict-yes').addEventListener('click', () => resolveConsent(true));
 $('port-conflict-dialog').addEventListener('cancel', event => { event.preventDefault(); if (!busy) resolveConsent(false); });
 $('resolve-port').addEventListener('click', () => {
   if (state?.portConflict) openConsent(state.portConflict);
-  else if (state) apply({...state.settings, policy: {...state.settings.policy, enabled: true}});
+  else if (state) gateway(true);
 });
 async function apply(settings) {
   if (busy || !state || state.transitioning) return;
@@ -329,7 +333,6 @@ async function apply(settings) {
 }
 for (const input of policyInputs) input.addEventListener('change', async () => {
   if (!state || busy) { render(); return; }
-  if (input.id === 'enabled' && input.checked && dirty) { notice('请先保存接入设置，再开启总开关。', true); render(); return; }
   const policy = {...state.settings.policy, handlers: {...state.settings.policy.handlers}};
   if (input.name === 'cleanup') policy.cleanup = input.value;
   else if (input.dataset.handler) policy.handlers[input.dataset.handler] = input.checked;
@@ -341,7 +344,7 @@ for (const input of policyInputs) input.addEventListener('change', async () => {
   }
   await apply({...state.settings, policy});
 });
-$('connection-form').addEventListener('input', () => { dirty = true; $('connection-hint').textContent = '有未保存的接入设置。保存后再开启总开关。'; });
+$('connection-form').addEventListener('input', () => { dirty = true; $('connection-hint').textContent = '有未保存的接入设置。保存后再开启网关。'; });
 $('connection-form').addEventListener('submit', async event => {
   event.preventDefault();
   if (!state || !$('connection-form').reportValidity()) return;
@@ -383,13 +386,24 @@ $('login-form').addEventListener('submit', async event => {
   } catch (error) { notice(error.message, true); }
   finally { busy = false; $('login-submit').disabled = false; render(); }
 });
-$('disconnect').addEventListener('click', async () => {
-  if (busy || !state) return;
+async function gateway(enabled) {
+  if (busy || !state || state.transitioning) { render(); return; }
+  if (enabled && dirty) { notice('请先保存接入设置，再开启网关。', true); render(); return; }
+  if (!enabled && !confirm('关闭网关会先恢复客户端地址，再强制中断上传、等待和流式请求，不等待模型完成。保留核心选择。确定关闭？')) { render(); return; }
+  dismissConsent(); let conflict;
   busy = true; render();
-  try { state = await api('/api/disconnect', {revision: state.revision}); notice('已断开并恢复本程序改写的地址。Codex 可能需要重开以读取原地址。'); }
-  catch (error) { notice('未断开：' + error.message, true); }
-  finally { busy = false; render(); }
-});
+  $('gateway').checked = enabled;
+  try {
+    state = await api(enabled ? '/api/connect' : '/api/disconnect', {revision: state.revision});
+    notice(enabled ? '网关已开启，新请求使用当前核心选择。' : '网关已关闭，活动请求已中断，地址已恢复。Codex 可能需要重开。');
+  } catch (error) {
+    conflict = error.conflict; notice('网关未切换：' + error.message, true);
+    try { state = await api('/api/state'); } catch {}
+  } finally { busy = false; render(); }
+  if (conflict) openConsent(conflict);
+}
+$('gateway').addEventListener('change', () => gateway($('gateway').checked));
+$('disconnect').addEventListener('click', () => gateway(false));
 $('exit').addEventListener('click', async () => {
   if (busy || !state || !confirm('退出会恢复客户端地址并停止本地服务。确定退出？')) return;
   busy = true; render();
@@ -405,7 +419,7 @@ async function refresh() {
         const first = !state; state = next; render();
         if (state.portConflictPending) notice('正在处理已确认的端口占用；等待操作完成，请勿重复操作。');
         else if (state.lastError) notice('需要处理：' + state.lastError, true);
-        else if (first) notice('控制台已按保存的配置启动。仅首次生成配置时默认关闭核心过滤。');
+        else if (first) notice('新进程仅启动网页，网关与核心均关闭；再次打开同一运行实例保留当前选择。');
       }
     } catch (error) { notice('无法连接或尚未登录：' + error.message, true); }
   }

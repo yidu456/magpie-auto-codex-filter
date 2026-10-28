@@ -30,7 +30,7 @@ function createManagementServer({controller, token, authEnabled = true, assets =
         json(403, {error: 'Open the console again from the application to authenticate.'}); return;
       }
       if (req.url === '/api/state' && req.method === 'GET') { json(200, controller.status()); return; }
-      if (req.method !== 'POST' || !['/api/settings', '/api/web', '/api/disconnect', '/api/exit', '/api/port-conflict'].includes(req.url)) {
+      if (req.method !== 'POST' || !['/api/settings', '/api/web', '/api/connect', '/api/disconnect', '/api/exit', '/api/port-conflict'].includes(req.url)) {
         json(404, {error: 'Unknown route.'}); return;
       }
       if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) { json(415, {error: 'Send application/json.'}); return; }
@@ -48,6 +48,7 @@ function createManagementServer({controller, token, authEnabled = true, assets =
         if (req.url === '/api/settings') return controller.update(body);
         if (req.url === '/api/web') return controller.updateWeb(body);
         if (Object.keys(body).some(key => key !== 'revision')) throw new Error('Invalid control fields.');
+        if (req.url === '/api/connect') return controller.connect(body);
         if (req.url === '/api/disconnect') return controller.disconnect();
         await controller.close();
         // Finish the response when possible; an abandoned browser cannot strand a closed core.

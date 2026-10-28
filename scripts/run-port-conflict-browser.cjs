@@ -56,14 +56,14 @@ async function main() {
     await page.goto(origin + '/#token=' + token);
     await page.locator('#controls').waitFor({state: 'visible'});
     const dialog = page.locator('#port-conflict-dialog');
-    const offer = async () => { await page.locator('#enabled').check(); await dialog.waitFor({state: 'visible'}); };
+    const offer = async () => { await page.locator('#gateway').check(); await dialog.waitFor({state: 'visible'}); };
     const gone = () => dialog.waitFor({state: 'hidden'});
     await offer();
     assert.equal(await page.locator('#port-conflict-no').evaluate(el => document.activeElement === el), true);
     assert.ok((await page.locator('#port-conflict-details').textContent()).includes(owner.name));
     assert.ok((await page.locator('#port-conflict-details').textContent()).includes('PID：' + child.pid + '\n'));
     assert.equal(await dialog.locator('img').count(), 0); assert.equal(await page.evaluate(() => globalThis.pwned), undefined);
-    assert.equal(await page.locator('#enabled').isChecked(), false);
+    assert.equal(await page.locator('#gateway').isChecked(), false);
     const screenshots = [];
     for (const [width, height, size] of [[1280, 1000, 'desktop'], [390, 844, 'mobile']]) {
       await page.setViewportSize({width, height});
@@ -88,7 +88,7 @@ async function main() {
     assert.equal(await page.locator('#login-token').isEnabled(), true); assert.equal(await page.locator('#login-submit').isEnabled(), true);
     await page.unroute('**/api/port-conflict');
     await page.locator('#login-token').fill(token); await page.locator('#login-submit').click(); await page.locator('#controls').waitFor({state: 'visible'});
-    assert.equal(await page.locator('#enabled').isEnabled(), true); assert.equal(kills, 0);
+    assert.equal(await page.locator('#gateway').isEnabled(), true); assert.equal(kills, 0);
     unsafe = true; await offer(); assert.equal(await page.locator('#port-conflict-yes').isDisabled(), true);
     assert.ok((await page.locator('#port-conflict-reason').textContent()).includes('IDENTITY_UNAVAILABLE'));
     await page.keyboard.press('Escape'); await gone(); unsafe = false;
@@ -100,9 +100,9 @@ async function main() {
     await page.locator('#port-conflict-yes').evaluate(el => { el.click(); el.click(); });
     release(); await gone();
     await page.waitForFunction(() => document.getElementById('connection-state').textContent === '配置已接入');
-    assert.equal(kills, 1); assert.equal(controller.status().connected, true); assert.equal(controller.status().settings.policy.enabled, true);
+    assert.equal(kills, 1); assert.equal(controller.status().connected, true); assert.equal(controller.status().settings.policy.enabled, false);
     await controller.disconnect(); assert.equal(fs.readFileSync(configPath, 'utf8'), original);
-    // Startup uses display-only inspection and an explicit settings-page action, never an automatic modal.
+    // Every fresh process remains web-only; only explicit gateway connect inspects an occupied port.
     await controller.close();
     const saved = JSON.parse(fs.readFileSync(store.filename)); saved.settings.policy.enabled = true;
     fs.writeFileSync(store.filename, JSON.stringify(saved));
@@ -113,10 +113,11 @@ async function main() {
       await controller.start(); management = createManagementServer({controller, token, assets});
       const startupOrigin = await listen(management); await page.goto(startupOrigin + '/#token=' + token);
       await page.locator('#controls').waitFor({state: 'visible'}); assert.equal(await dialog.isVisible(), false);
-      assert.equal(await page.locator('#core-state').textContent(), '待接入'); assert.equal(await page.locator('#enabled').isChecked(), true);
-      await page.locator('nav a[data-page=settings]').click(); await page.locator('#resolve-port').click();
+      assert.equal(await page.locator('#core-state').textContent(), '已关闭'); assert.equal(await page.locator('#gateway').isChecked(), false);
+      assert.equal(controller.status().portConflict, null);
+      await page.locator('#gateway').check();
       await dialog.waitFor({state: 'visible'}); await page.keyboard.press('Escape'); await gone();
-      assert.equal(controller.status().settings.policy.enabled, true); assert.equal(kills, 1);
+      assert.equal(controller.status().settings.policy.enabled, false); assert.equal(kills, 1);
     } finally { await close(startupPort); }
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({yesNoEscape: true, staleRevisionAnd409: true, auth403Relogin: true, unsafeOwner: true,

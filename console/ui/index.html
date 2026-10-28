@@ -35,6 +35,10 @@
       <div class="actions"><button id="port-conflict-no" type="button" class="secondary" autofocus>否，保留进程</button><button id="port-conflict-yes" type="button">是，结束并开启</button></div>
     </dialog>
     <div id="page-dashboard">
+    <section class="master" aria-labelledby="gateway-title">
+      <div class="master-copy"><div class="master-heading"><span id="gateway-lamp" class="lamp"></span><h2 id="gateway-title">网关接入</h2><span id="gateway-state">关闭</span></div><p id="gateway-description">网关关闭时不监听、不接入。开启后使用已保存的接入设置；关闭会恢复地址并中断活动请求。</p></div>
+      <label class="switch"><input id="gateway" type="checkbox" role="switch" aria-label="网关接入开关" disabled><span class="switch-track" aria-hidden="true"></span></label>
+    </section>
     <section class="master" aria-labelledby="master-title">
       <div class="master-copy"><div class="master-heading"><span id="core-lamp" class="lamp"></span><h2 id="master-title">核心过滤</h2><span id="core-state">关闭</span></div><p id="core-description">关闭时不清理、不重试、不暂存；已接入的请求直通 Magpie。</p></div>
       <label class="switch"><input id="enabled" type="checkbox" role="switch" aria-label="核心过滤总开关" disabled><span class="switch-track" aria-hidden="true"></span></label>
@@ -58,7 +62,7 @@
     </div>
     <div id="page-settings" hidden>
     <section class="panel connection" aria-labelledby="connection-title">
-      <div class="section-heading"><div><h2 id="connection-title">客户端接入</h2><p>先保存接入设置，再开启总开关。这里只管理过滤器，不管理模型账号。</p></div><span class="tag">Codex → Filter → Magpie</span></div>
+      <div class="section-heading"><div><h2 id="connection-title">客户端接入</h2><p>先保存接入设置，再开启网关。这里只管理过滤器，不管理模型账号。</p></div><span class="tag">Codex → Filter → Magpie</span></div>
       <form id="connection-form">
         <div class="connection-fields">
           <label>客户端<select id="client" name="client"><option value="codex">Codex</option></select></label>
@@ -66,7 +70,7 @@
           <label>过滤端口<input id="port" name="port" type="number" min="1024" max="65535" placeholder="18184" required></label>
           <label class="config-field">Codex 配置文件<input id="config-path" name="configPath" required spellcheck="false" placeholder="C:\Users\…\.codex\config.toml"></label>
         </div>
-        <div class="form-footer"><span id="connection-hint">默认过滤端口 18184，可更改。先断开再改端口，重新接入后重启 Codex。</span><div class="actions"><button id="disconnect" type="button" class="secondary" disabled>断开并恢复</button><button id="save-connection" type="submit" disabled>保存接入设置</button></div></div>
+        <div class="form-footer"><span id="connection-hint">默认过滤端口 18184，可更改。先断开再改端口，重新接入后重启 Codex。</span><div class="actions"><button id="disconnect" type="button" class="secondary" disabled>关闭网关并中断请求</button><button id="save-connection" type="submit" disabled>保存接入设置</button></div></div>
         <button id="resolve-port" type="button" class="secondary" hidden>处理端口占用 / 重试接入</button>
       </form>
     </section>
@@ -74,7 +78,7 @@
       <div class="section-heading"><div><h2 id="web-title">网页与便携配置</h2><p>网页修改写入同一配置文件。网页端口、管理鉴权和令牌在下次启动生效，当前会话继续可用。</p></div></div>
       <p class="config-location">配置文件：<span id="config-file"></span></p>
       <form id="web-form">
-        <label><input id="web-auth-enabled" type="checkbox" aria-describedby="web-auth-warning">启用本地管理令牌鉴权</label>
+        <label class="boolean-switch"><input id="web-auth-enabled" type="checkbox" role="switch" aria-describedby="web-auth-warning">启用本地管理令牌鉴权</label>
         <p id="web-auth-warning">新配置默认关闭。关闭时本机程序无需令牌即可调用管理操作；仍仅监听本机，并验证 Host / Origin 与请求边界。启用后需管理令牌登录，与模型 API 密钥无关。</p>
         <div class="connection-fields web-fields">
           <label>网页端口<input id="web-port" type="number" min="1024" max="65535" required placeholder="18185"></label>
@@ -94,13 +98,13 @@
     <section class="panel" aria-labelledby="handlers-title">
       <div class="section-heading"><div><h2 id="handlers-title">异常处理</h2><p>每项独立开关。未勾选时直接返回错误，不再为该类错误清理或重试。</p></div><span class="tag">共享重试预算</span></div>
       <div class="handler-grid">
-        <label class="check-row"><input type="checkbox" data-handler="azureResource" checked><span><strong>Azure 资源归属错误</strong><small>精确识别跨资源历史项；条件模式下清理后重试。</small></span><em>最多 5 次</em></label>
-        <label class="check-row"><input type="checkbox" data-handler="encryptedContent" checked><span><strong>无效推理密文</strong><small>仅条件模式处理 invalid_encrypted_content。</small></span><em>共享资源额度</em></label>
-        <label class="check-row"><input type="checkbox" data-handler="rateLimit" checked><span><strong>临时限流</strong><small>按服务端等待要求退避；不包含余额和配额耗尽。</small></span><em>最多 20 次</em></label>
-        <label class="check-row"><input type="checkbox" data-handler="transport" checked><span><strong>网络 / 中继 / 服务器错误</strong><small>网络异常、空闲超时、明确断连、中继错误，以及未归类的 JSON 对象 HTTP 5xx；不包含鉴权、余额等业务错误。</small></span><em>最多 10 次</em></label>
-        <label class="check-row"><input type="checkbox" data-handler="streamIncomplete" checked><span><strong>流式中断 / 无详情失败</strong><small>整轮暂存或保护首段期间可恢复；正文交付后不重放。</small></span><em>共享断流额度</em></label>
-        <label class="check-row"><input type="checkbox" data-handler="alb400" checked><span><strong>ALB 网关 HTML 400</strong><small>只匹配已知 ALB 错误页，不扩大到所有 HTTP 400。</small></span><em>共享断流额度</em></label>
-        <label class="check-row"><input type="checkbox" data-handler="unavailable" checked><span><strong>无可用渠道</strong><small>明确报告 no_available_channel 时尝试恢复。</small></span><em>最多 10 次</em></label>
+        <label class="check-row"><input type="checkbox" data-handler="azureResource" role="switch" checked><span><strong>Azure 资源归属错误</strong><small>精确识别跨资源历史项；条件模式下清理后重试。</small></span><em>最多 5 次</em></label>
+        <label class="check-row"><input type="checkbox" data-handler="encryptedContent" role="switch" checked><span><strong>无效推理密文</strong><small>仅条件模式处理 invalid_encrypted_content。</small></span><em>共享资源额度</em></label>
+        <label class="check-row"><input type="checkbox" data-handler="rateLimit" role="switch" checked><span><strong>临时限流</strong><small>按服务端等待要求退避；不包含余额和配额耗尽。</small></span><em>最多 20 次</em></label>
+        <label class="check-row"><input type="checkbox" data-handler="transport" role="switch" checked><span><strong>网络 / 中继 / 服务器错误</strong><small>网络异常、空闲超时、明确断连、中继错误，以及未归类的 JSON 对象 HTTP 5xx；不包含鉴权、余额等业务错误。</small></span><em>最多 10 次</em></label>
+        <label class="check-row"><input type="checkbox" data-handler="streamIncomplete" role="switch" checked><span><strong>流式中断 / 无详情失败</strong><small>整轮暂存或保护首段期间可恢复；正文交付后不重放。</small></span><em>共享断流额度</em></label>
+        <label class="check-row"><input type="checkbox" data-handler="alb400" role="switch" checked><span><strong>ALB 网关 HTML 400</strong><small>只匹配已知 ALB 错误页，不扩大到所有 HTTP 400。</small></span><em>共享断流额度</em></label>
+        <label class="check-row"><input type="checkbox" data-handler="unavailable" role="switch" checked><span><strong>无可用渠道</strong><small>明确报告 no_available_channel 时尝试恢复。</small></span><em>最多 10 次</em></label>
       </div>
       <p class="budget">每条请求合计最多额外重试 20 次，总期限 30 分钟。取消请求会终止等待；关闭选项不会放宽这些上限。</p>
     </section>
@@ -108,7 +112,7 @@
       <div class="section-heading"><div><h2 id="delivery-title">响应交付</h2><p>这是显示速度与中途错误恢复能力之间的取舍，不会改变模型生成速度。</p></div></div>
       <div class="delivery-layout">
         <label class="delivery-select">交付模式<select id="delivery-mode"><option value="full">整轮暂存（默认）</option><option value="protected">保护首段流式</option><option value="direct">直接流式</option></select><small id="delivery-description">等本轮成功再交付正文和工具事件。</small></label>
-        <label class="check-row"><input id="heartbeat" type="checkbox" checked><span><strong>等待期间发送保活</strong><small>整轮暂存或保护首段的等待期间可用；正文交付后停止。核心关闭时不发送。</small></span></label>
+        <label class="check-row"><input id="heartbeat" type="checkbox" role="switch" checked><span><strong>等待期间发送保活</strong><small>整轮暂存或保护首段的等待期间可用；正文交付后停止。核心关闭时不发送。</small></span></label>
       </div>
       <p id="stream-warning" class="warning" hidden></p>
     </section>
@@ -127,7 +131,7 @@
     <section class="panel" aria-labelledby="diagnostics-title"><div class="section-heading"><div><h2 id="diagnostics-title">记录与持久化诊断</h2><p>诊断计数属于当前控制器生命周期，不是今日请求数；异常不会阻塞转发。</p></div></div><dl id="diagnostics" class="diagnostic-list"></dl></section>
     </div>
     <div id="page-help" class="help-page" hidden>
-      <section class="panel"><h2>接入与退出</h2><ol><li>确认 Magpie 地址与 Codex 配置文件，保存接入设置，再开启核心过滤。</li><li>首次接入、更换端口或恢复地址后，重开 Codex 让它读取配置。不要与旧版同时接管同一份配置。</li><li>关闭核心是字节直通，不清理、不重试、不暂存，也不解析响应获取 Token；不等于断开接入。</li><li>断开或退出会恢复本程序改写的地址。网页关闭不停止服务，再次双击 EXE 可重新打开。</li></ol><p>网页端口和管理令牌保存后仅在下次启动生效；当前令牌继续可用。请保留配置与恢复文件，不要公开令牌。</p></section>
+      <section class="panel"><h2>接入与退出</h2><ol><li>每次启动只开启网页，网关与核心均关闭；旧配置读取不会改写。确认接入设置并保存，再开启网关，按需开启核心。</li><li>首次接入、更换端口或恢复地址后，重开 Codex 让它读取配置。不要与旧版同时接管同一份配置。</li><li>关闭核心是字节直通，不清理、不重试、不暂存，也不解析响应获取 Token；不等于断开接入。</li><li>网关关闭会先安全恢复地址，再强制中断上传、流式与退避请求；保留核心选择。普通退出仍拒绝活动请求，请先关闭网关。网页关闭不停止服务，再次双击 EXE 可重新打开。</li></ol><p>网页端口和管理令牌保存后仅在下次启动生效；当前令牌继续可用。请保留配置与恢复文件，不要公开令牌。</p></section>
       <section class="panel"><h2>如何选择响应交付</h2><dl class="guide-list"><dt>整轮暂存（默认）</dt><dd>等本轮成功再交付正文与工具事件；失败尝试不交付，可在预算内恢复。手工配置的两个保护布尔值均为 true 时也优先暂存。</dd><dt>保护首段流式</dt><dd>在首次内容增量前检查并恢复早期错误，然后持续流式交付。首次内容交付后不再重试、清理或重放工具；晚期失败仍记作失败，不因 HTTP 200 视为成功。</dd><dt>直接流式</dt><dd>即时转发，不拦截流内错误；开始实际交付后无法重试或撤回工具事件。</dd></dl><p>暂存与首段保护的交付前缓存最多 64 MiB。保活只在核心启用且尚未实际交付时发送空进度，不改变模型生成速度。设置仅作用于新请求，执行中的请求保留原策略。</p></section>
       <section class="panel"><h2>历史清理与恢复边界</h2><p>暴力清理先移除历史推理与可移除 ID；条件清理先保留，在明确的资源归属或有效 HTTP 400 invalid_encrypted_content 错误后才清理；不清理始终保留历史，但仍使用已启用的其他恢复。</p><p>Magpie 的 store、上下文与压缩委托保持不变；消息正文、工具结果与 call_id 配对不会因为切换选项被删除。实际条件清理才使用安全移除规则。</p><p>网络处理覆盖连接失败、空闲超时、明确断连、中继错误 cc_switch_forward_failed / bad_response / server_error，以及未归类的 JSON 对象 HTTP 5xx；不是任意 HTML 5xx。流式中断与无详情失败使用独立开关，ALB 400 只匹配已知网关页。</p><p>HTTP 401/403、鉴权、权限、账单、余额、配额和无效参数等业务错误不进入通用网关重试；历史密文错误也不会被通用 5xx 兜底绕过。关闭一类处理不会转入另一类继续重试。</p><p>资源最多 5 次、临时限流最多 20 次、网络 / 中继 / 断流共享最多 10 次、无渠道最多 10 次；每个请求合计最多额外 20 次，期限 30 分钟。遵守 Retry-After 最小等待，取消立即终止等待，交付后永不重放。WebSocket 暂不支持。</p></section>
       <section class="panel"><h2>如何阅读指标</h2><p>开始、完成、使用量和重试各按发生时的本地日期计入；跨午夜的活动请求不会中断。首次实际交付与总时长包含上传；分布提供区间与均值，不生成虚构的百分位。</p><p>Token 仅计有效 response.completed.usage，核心关闭、缺失或检查不可用时显示未观测，而非零。可选总量与缓存字段只覆盖实际提供该字段的观测；有效观测的零仍为零。这不是账单，也不承诺速度、成本或恢复率改善。</p><p>日汇总每分钟及正常退出时写入本地 metrics.json，同日本机重启可恢复；曲线与最近请求只在内存，重启清空。异常退出可能丢失上次检查点后的数据与排队日志，原子替换不是断电保证。</p><p>曲线最多保留最近 180 分钟有事件的窗口，活动记录最多 1000 条，结束记录最多 200 条；超限或日志丢弃会显示诊断。计数不包含请求正文、响应正文、密钥或工具数据。</p></section>

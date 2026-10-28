@@ -51,6 +51,23 @@ async function quit(record) {
   return call(record.origin, '/api/exit', {headers, body: JSON.stringify({revision: state.revision})});
 }
 
+test('actual launcher exit bounds its own speculative idle management TCP connections', {timeout: 12000}, async t => {
+  const net = require('node:net'), {once} = require('node:events');
+  const runtime = await portableFixture(t), child = start(runtime);
+  const sockets = [];
+  t.after(async () => { for (const socket of sockets) socket.destroy(); await stopChild(child); });
+  const record = await waitFor(() => readRecord(runtime));
+  for (let i = 0; i < 3; i++) {
+    const socket = net.connect(Number(new URL(record.origin).port), '127.0.0.1');
+    socket.on('error', () => {}); sockets.push(socket); await once(socket, 'connect');
+  }
+  assert.equal((await quit(record)).status, 200);
+  await waitFor(() => exited(child), 2000);
+  assert.equal(child.exitCode, 0, child.output);
+  assert.equal(fs.existsSync(path.join(runtime, 'service.json')), false);
+  assert.equal(fs.existsSync(path.join(runtime, 'instance.lock')), false);
+});
+
 test('singleton verifier accepts saturated bounded metrics and log metadata', async t => {
   let now = new Date(2026, 9, 28, 9).getTime();
   const recorder = createRecorder({now: () => now}), max = Number.MAX_SAFE_INTEGER;
@@ -210,7 +227,7 @@ test('configured web port conflicts fail without fallback or touching the client
   assert.equal((await call('http://127.0.0.1:' + config.web.port, '/', {method: 'GET'})).body, 'other');
 });
 
-test('fresh launch follows edited token, web port and enabled policy without resetting the file', async t => {
+test('fresh launch follows web settings but keeps gateway and core off without resetting old enabled bytes', async t => {
   const runtime = await portableFixture(t), configFile = path.join(runtime, 'MagpieFilter.config.json');
   const up = http.createServer((req, res) => {req.resume(); req.on('end', () => res.end('{}'));});
   t.after(() => close(up)); const upstream = await listen(up);
@@ -225,7 +242,7 @@ test('fresh launch follows edited token, web port and enabled policy without res
   t.after(async () => { if (record) await quit(record).catch(() => {}); if (child.exitCode === null) child.kill(); });
   record = await waitFor(() => readRecord(runtime));
   const state = JSON.parse((await call(record.origin, '/api/state', {method: 'GET', headers: {'x-console-token': config.web.token}})).body);
-  assert.equal(state.attached, true); assert.equal(state.settings.policy.enabled, true);
+  assert.equal(state.attached, false); assert.equal(state.settings.policy.enabled, false);
   assert.equal(state.settings.policy.cleanup, 'never');
   await quit(record); await waitFor(() => exited(child));
   assert.equal(JSON.parse(fs.readFileSync(configFile)).settings.policy.enabled, true);
@@ -351,8 +368,15 @@ test('real launcher facade forwards occupied-port cancellation and consumes cons
   const headers = {'x-console-token': record.token, 'content-type': 'application/json'};
   const state = JSON.parse((await call(record.origin, '/api/state', {method: 'GET', headers})).body);
   assert.equal(state.application.pid, child.pid); assert.equal(state.connected, false);
-  assert.ok(state.portConflict?.challenge);
-  const body = JSON.stringify({revision: state.revision, challenge: state.portConflict.challenge, confirm: false});
+  assert.equal(state.portConflict, null);
+  // Native listener inspection can exceed the shared five-second HTTP fixture deadline.
+  const response = await fetch(record.origin + '/api/connect', {method: 'POST', headers,
+    body: JSON.stringify({revision: state.revision}), signal: AbortSignal.timeout(30000)});
+  const offered = {status: response.status, body: await response.text()};
+  assert.equal(offered.status, 409, offered.body);
+  const conflict = JSON.parse(offered.body).conflict;
+  assert.ok(conflict?.challenge);
+  const body = JSON.stringify({revision: state.revision, challenge: conflict.challenge, confirm: false});
   const canceled = await call(record.origin, '/api/port-conflict', {headers, body});
   assert.equal(canceled.status, 200, canceled.body);
   assert.equal(JSON.parse(canceled.body).portConflict, null);
