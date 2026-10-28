@@ -143,6 +143,8 @@ test('launcher is single-instance, inert by default and exits through authentica
   const state = JSON.parse((await call(record.origin, '/api/state', {method: 'GET', headers})).body);
   assert.equal(state.application.pid, first.pid);
   assert.equal(state.application.instance, record.instance);
+  assert.equal(state.application.name, 'Magpie Filter');
+  assert.equal(state.application.executable, process.execPath);
   assert.equal(state.settings.policy.enabled, false);
   const config = JSON.parse(fs.readFileSync(path.join(runtime, 'MagpieFilter.config.json')));
   assert.equal(record.origin, 'http://127.0.0.1:' + config.web.port);
@@ -180,6 +182,19 @@ test('launcher arguments reject unknown flags and require explicit absolute runt
   assert.equal(parseArgs(['--no-open']).open, false);
   assert.equal(parseArgs([]).configFile, path.resolve(__dirname, '../MagpieFilter.config.json'));
   assert.equal(parseArgs([]).runtime, path.resolve(__dirname, '../.magpie-filter'));
+});
+
+test('application identity bounds metadata and sets a process title only for packaged Unix', () => {
+  const {applicationIdentity} = require('./main.cjs');
+  const source = {pid: 12345, execPath: '/actual/node', platform: 'linux', title: 'unchanged'};
+  assert.deepEqual(applicationIdentity(source, false), {name: 'Magpie Filter', pid: 12345, executable: '/actual/node'});
+  assert.equal(source.title, 'unchanged');
+  const packaged = {...source, execPath: '/copy/MagpieFilter'};
+  assert.equal(applicationIdentity(packaged, true).executable, '/copy/MagpieFilter');
+  assert.equal(packaged.title, 'MagpieFilter');
+  const windows = {...source, platform: 'win32', execPath: 'C:\\copy\\MagpieFilter.exe'};
+  applicationIdentity(windows, true); assert.equal(windows.title, 'unchanged');
+  assert.equal(applicationIdentity({...source, execPath: 'x'.repeat(40000)}, false).executable.length, 32768);
 });
 
 test('foreign service records are never overwritten even without a console lock', async t => {

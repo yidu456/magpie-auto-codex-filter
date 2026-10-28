@@ -23,6 +23,27 @@ async (page, {screenshots = '.verification/task-4-browser', only} = {}) => {
   await page.locator('#login-token').fill(token); await page.locator('#login-submit').click();
   await page.locator('#controls').waitFor({state: 'visible'}); await settled();
   const result = {manualLogin: true};
+  if (!only || only === 'identity') {
+    await go('settings');
+    check(await page.locator('#application-name').textContent() === 'Magpie Filter', 'Application name missing');
+    check(await page.locator('#application-pid').textContent() === String(fixture.application.pid), 'PID must be raw, not locale formatted');
+    check(await page.locator('#application-executable').textContent() === fixture.application.executable, 'Settings must identify the actual executable');
+    const malicious = '<img src=x onerror="globalThis.identityPwned=1">', executable = malicious + 'long-path'.repeat(5000);
+    let pid = 1234567;
+    await page.route('**/api/state', async route => {
+      const response = await route.fetch(), live = await response.json();
+      await route.fulfill({response, json: {...live, application: {...live.application, name: malicious.repeat(20), pid, executable}}});
+    });
+    await page.waitForFunction(() => document.getElementById('application-pid').textContent === '1234567');
+    check(await page.locator('#application-name').textContent() === malicious.repeat(20).slice(0, 256), 'Application name must be bounded literal text');
+    check(await page.locator('#application-executable').textContent() === executable.slice(0, 32768), 'Executable must be bounded literal text');
+    check(await page.locator('#page-settings img').count() === 0 && !await page.evaluate(() => globalThis.identityPwned), 'Application identity executed HTML');
+    pid = -1;
+    await page.waitForFunction(() => document.getElementById('application-pid').textContent === '不可用');
+    await page.unroute('**/api/state');
+    await page.reload(); await page.locator('#controls').waitFor({state: 'visible'}); await settled();
+    result.applicationIdentity = result.safeIdentityText = true;
+  }
   if (!only || only === 'navigation') {
     await visiblePage('dashboard');
     check(await page.locator('#connection-form').isHidden() && await page.locator('#delivery-mode').isHidden(), 'Home must show charts/core only, not other settings');

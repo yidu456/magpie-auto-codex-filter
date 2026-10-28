@@ -7,9 +7,9 @@ const {spawn} = require('node:child_process');
 const {createUIFixture} = require('./serve-ui-fixture.cjs');
 const {call, sample} = require('../magpie-auto-codex-filter/test-support.cjs');
 
-async function main() {
+async function main({executable} = {}) {
   const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
-  const fixture = await createUIFixture({authEnabled: false});
+  const fixture = await createUIFixture({executable, authEnabled: false});
   const children = [fixture.child], requests = [], errors = [];
   let browser, failure, upstreamCanceled = false, hits = 0, mode = 'protected';
   const wait = async fn => {
@@ -24,7 +24,8 @@ async function main() {
   };
   const exited = child => child.exitCode !== null || child.signalCode !== null;
   const launch = () => {
-    const child = spawn(process.execPath, [path.resolve(__dirname, '../console/main.cjs'), '--runtime', fixture.runtime, '--no-open'],
+    const child = spawn(executable ? path.resolve(executable) : process.execPath,
+      [...(executable ? [] : [path.resolve(__dirname, '../console/main.cjs')]), '--runtime', fixture.runtime, '--no-open'],
       {windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']});
     child.output = ''; child.stdout.on('data', chunk => { child.output += chunk; }); child.stderr.on('data', chunk => { child.output += chunk; });
     children.push(child); return child;
@@ -113,5 +114,5 @@ async function main() {
   }
   if (failure) throw failure;
 }
-if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });
+if (require.main === module) main({executable: process.argv[2]}).catch(error => { console.error(error); process.exitCode = 1; });
 module.exports = {main};

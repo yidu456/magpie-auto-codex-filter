@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const {spawn} = require('node:child_process');
+const {spawn, spawnSync} = require('node:child_process');
 const {call, listen, close, sample} = require('../magpie-auto-codex-filter/test-support.cjs');
 const frame = (type, extra = {}) => 'event: ' + type + '\ndata: ' + JSON.stringify({type, ...extra}) + '\n\n';
 const delta = frame('response.output_text.delta', {delta: 'fixture-first-delta'});
@@ -15,6 +15,23 @@ function standaloneEnvironment(directory, inherited = process.env) {
   return {...Object.fromEntries(Object.entries(inherited).filter(([key]) => !/^path$/i.test(key))), PATH: bin, NODE_OPTIONS: ''};
 }
 const exited = child => child.exitCode !== null || child.signalCode !== null;
+function verifyWindowsIdentity(executable, pid) {
+  assert.equal(process.platform, 'win32'); assert.ok(Number.isSafeInteger(pid) && pid > 0);
+  const script = '$ErrorActionPreference="Stop"; $v=[Diagnostics.FileVersionInfo]::GetVersionInfo($env:MAGPIE_IDENTITY_FIXTURE); '
+    + '$p=Get-CimInstance Win32_Process -Filter ("ProcessId = " + [int]$env:MAGPIE_IDENTITY_PID); '
+    + '@{version=($v | Select-Object FileDescription,ProductName,InternalName,OriginalFilename,FileVersion,ProductVersion); '
+    + 'image=($p | Select-Object Name,ProcessId,ExecutablePath)} | ConvertTo-Json -Compress';
+  const result = spawnSync(path.join(process.env.WINDIR || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+    ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+    {windowsHide: true, encoding: 'utf8', timeout: 15000, env: {...process.env, MAGPIE_IDENTITY_FIXTURE: executable, MAGPIE_IDENTITY_PID: String(pid)}});
+  assert.equal(result.status, 0, result.stderr);
+  const {version, image} = JSON.parse(result.stdout);
+  assert.deepEqual(version, {FileDescription: 'Magpie Filter', ProductName: 'Magpie Filter', InternalName: 'MagpieFilter',
+    OriginalFilename: 'MagpieFilter.exe', FileVersion: require('./windows-identity.cjs').numericVersion(require('../package.json').version),
+    ProductVersion: require('./windows-identity.cjs').numericVersion(require('../package.json').version)});
+  assert.equal(image.ProcessId, pid); assert.equal(image.Name, 'MagpieFilter.exe'); assert.equal(image.ExecutablePath, executable);
+  return {...image, version};
+}
 async function main({executable} = {}) {
   const exe = path.resolve(executable || path.join('dist', process.platform === 'win32' ? 'MagpieFilter.exe' : 'MagpieFilter'));
   const root = path.resolve('.verification'); fs.mkdirSync(root, {recursive: true});
@@ -41,7 +58,7 @@ async function main({executable} = {}) {
     while (Date.now() < deadline) { const result = await fn(); if (result) return result; await new Promise(r => setTimeout(r, 60)); }
     throw new Error('Packaged lifecycle timed out. ' + children.map(c => c.output).join('\n'));
   };
-  let record, upstreamServer, releaseDelta, savedMetrics;
+  let record, upstreamServer, releaseDelta, savedMetrics, windowsIdentity;
   const stop = async () => {
     if (!record) return;
     const headers = {'content-type': 'application/json', ...(record.authEnabled !== false ? {'x-console-token': record.token} : {})};
@@ -54,6 +71,9 @@ async function main({executable} = {}) {
     const headers = {'x-console-token': record.token};
     const state = JSON.parse((await call(record.origin, '/api/state', {method: 'GET', headers})).body);
     assert.equal(state.settings.policy.enabled, false); assert.equal(state.application.pid, first.pid);
+    assert.equal(state.connected, false); assert.equal(state.application.name, 'Magpie Filter');
+    assert.equal(state.application.executable, exe);
+    if (process.platform === 'win32') windowsIdentity = verifyWindowsIdentity(exe, first.pid);
     assert.equal(state.settings.policy.bufferResponse, true); assert.equal(state.settings.policy.protectStreamStart, false);
     assert.equal(fs.readFileSync(configFile, 'utf8'), oldBytes, 'Loading old config must not rewrite it');
     assert.equal(record.origin, 'http://127.0.0.1:' + webPort);
@@ -204,6 +224,7 @@ async function main({executable} = {}) {
     current = JSON.parse((await call(record.origin, '/api/state', {method: 'GET'})).body);
     assert.equal(current.web.activeAuthEnabled, false); assert.doesNotMatch(JSON.stringify(current), new RegExp(oldConfig.web.token));
     assert.equal(current.configFile, adjacentConfig); assert.equal(current.application.pid, copied.pid);
+    assert.equal(current.application.name, 'Magpie Filter'); assert.equal(current.application.executable, copiedExe);
     assert.equal(current.settings.policy.enabled, false); assert.equal(current.settings.policy.bufferResponse, false);
     assert.equal(current.settings.policy.protectStreamStart, false, 'Old unbuffered stays direct');
     assert.equal(fs.readFileSync(adjacentConfig, 'utf8'), directBytes);
@@ -216,7 +237,7 @@ async function main({executable} = {}) {
       fixtureFilterAndBypass: true, portableSettings: true, pendingWebRotation: true,
       literalOldConfigReadOnly: true, oldUnbufferedDirect: true, protectedFirstDelta: true, earlyRecovery: true,
       lateFailureNoReplay: true, aggregateOnlyRestore: true, copiedAlternateCwdNoNodePath: true, adjacentConfig: true,
-      editedStartupWebOnly: true, exactRestore: true, cleanExit: true}));
+      editedStartupWebOnly: true, applicationIdentity: true, windowsIdentity, bothAuthModes: true, exactRestore: true, cleanExit: true}));
   } finally {
     releaseDelta?.();
     await stop().catch(() => {});
@@ -228,4 +249,4 @@ async function main({executable} = {}) {
   }
 }
 if (require.main === module) main({executable: process.argv[2]}).catch(error => { console.error(error); process.exitCode = 1; });
-module.exports = {main, standaloneEnvironment};
+module.exports = {main, standaloneEnvironment, verifyWindowsIdentity};

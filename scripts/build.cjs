@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {spawnSync} = require('node:child_process');
 const {createHash} = require('node:crypto');
+const {copyNativeExecutable, numericVersion} = require('./windows-identity.cjs');
 
 function nativeTarget(platform = process.platform, arch = process.arch) {
   const targets = {'win32-x64': 'windows-x64', 'darwin-arm64': 'macos-arm64', 'darwin-x64': 'macos-x64', 'linux-x64': 'linux-x64'};
@@ -52,7 +53,8 @@ async function build({outputDirectory} = {}) {
   fs.writeFileSync(config, JSON.stringify({main: entry, output: blob, disableExperimentalSEAWarning: true,
     useSnapshot: false, useCodeCache: false, execArgvExtension: 'none', assets}));
   run(process.execPath, ['--experimental-sea-config', config]);
-  fs.copyFileSync(process.execPath, output, fs.constants.COPYFILE_EXCL);
+  const version = require('../package.json').version;
+  copyNativeExecutable(process.execPath, output, version, {run});
   await finalizeExecutable(output, fs.readFileSync(blob), target.platform);
   const sha = createHash('sha256').update(fs.readFileSync(output)).digest('hex');
   fs.writeFileSync(path.join(dist, 'SHA256SUMS.txt'), sha + '  ' + target.executable + '\n');
@@ -62,7 +64,8 @@ async function build({outputDirectory} = {}) {
   if (!text.includes('Node.js') || !text.includes('Permission')) throw new Error('Unexpected Node license content.');
   fs.writeFileSync(path.join(dist, 'NODE-LICENSE.txt'), text);
   fs.copyFileSync(path.join(root, 'LICENSE'), path.join(dist, 'LICENSE.txt'));
-  const metadata = {...target, output, bytes: fs.statSync(output).size, node: process.version, sha256: sha};
+  const metadata = {...target, output, bytes: fs.statSync(output).size, node: process.version,
+    version, numericVersion: numericVersion(version), sha256: sha};
   fs.writeFileSync(path.join(dist, 'build-info.json'), JSON.stringify(metadata, null, 2) + '\n');
   console.log(JSON.stringify(metadata, null, 2));
   return metadata;

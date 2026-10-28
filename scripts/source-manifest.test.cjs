@@ -9,7 +9,7 @@ const publicFiles = directory => fs.readdirSync(path.join(root, directory), {wit
   .filter(entry => !entry.name.startsWith('.') && entry.name !== 'node_modules')
   .flatMap(entry => {
     const file = directory + '/' + entry.name;
-    return entry.isDirectory() ? publicFiles(file) : /\.(?:cjs|js|css|html)$/.test(file) ? [file] : [];
+    return entry.isDirectory() ? publicFiles(file) : /\.(?:cjs|js|css|html|ps1)$/.test(file) ? [file] : [];
   });
 const entries = () => fs.readFileSync(path.join(root, 'SHA256SUMS.txt'), 'utf8').trim().split(/\r?\n/).map(line => {
   const match = /^([a-f0-9]{64})  (.+)$/.exec(line);

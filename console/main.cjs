@@ -13,6 +13,10 @@ const {createConfigStore} = require('./configuration.cjs');
 const {openBrowser} = require('./browser.cjs');
 
 const SERVICE = 'magpie-filter-console-v1';
+function applicationIdentity(runtime = process, packaged = sea.isSea()) {
+  if (packaged && runtime.platform !== 'win32') runtime.title = 'MagpieFilter';
+  return {name: 'Magpie Filter', pid: runtime.pid, executable: runtime.execPath.slice(0, 32768)};
+}
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 function alive(pid) {
   if (!Number.isSafeInteger(pid) || pid < 1) return true;
@@ -76,6 +80,7 @@ async function openConsole(record, token, configFile, stateFile) {
 }
 
 async function main(args = process.argv.slice(2)) {
+  const identity = applicationIdentity();
   const options = parseArgs(args), runtime = options.runtime;
   fs.mkdirSync(runtime, {recursive: true});
   const lock = path.join(runtime, 'instance.lock'), ownerFile = path.join(lock, 'owner.json'), stateFile = path.join(runtime, 'service.json');
@@ -138,7 +143,7 @@ async function main(args = process.argv.slice(2)) {
       throw new Error('Existing service ownership cannot be verified. Keep the original runtime and retry after it exits.');
     }
     const store = createConfigStore(options.configFile), {token, port, authEnabled} = store.current.web;
-    const facade = {status: () => ({...controller.status(), application: {service: SERVICE, pid: process.pid, instance}}),
+    const facade = {status: () => ({...controller.status(), application: {service: SERVICE, ...identity, instance}}),
       update: value => controller.update(value), updateWeb: value => controller.updateWeb(value),
       connect: value => controller.connect(value),
       resolvePortConflict: value => controller.resolvePortConflict(value),
@@ -180,4 +185,4 @@ function reportError(error) {
   process.exitCode = 1;
 }
 if (require.main === module) main().catch(reportError);
-module.exports = {main, parseArgs};
+module.exports = {main, parseArgs, applicationIdentity};

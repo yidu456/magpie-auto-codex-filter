@@ -77,6 +77,7 @@
     <section class="panel" aria-labelledby="web-title">
       <div class="section-heading"><div><h2 id="web-title">网页与便携配置</h2><p>网页修改写入同一配置文件。网页端口、管理鉴权和令牌在下次启动生效，当前会话继续可用。</p></div></div>
       <p class="config-location">配置文件：<span id="config-file"></span></p>
+      <p class="config-location">应用：<span id="application-name"></span> · PID：<span id="application-pid"></span><br>可执行文件：<span id="application-executable"></span></p>
       <form id="web-form">
         <label class="boolean-switch"><input id="web-auth-enabled" type="checkbox" role="switch" aria-describedby="web-auth-warning">启用本地管理令牌鉴权</label>
         <p id="web-auth-warning">新配置默认关闭。关闭时本机程序无需令牌即可调用管理操作；仍仅监听本机，并验证 Host / Origin 与请求边界。启用后需管理令牌登录，与模型 API 密钥无关。</p>

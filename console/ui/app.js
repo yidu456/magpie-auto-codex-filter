@@ -235,6 +235,9 @@ function render() {
   $('port-conflict-no').disabled = working;
   $('port-conflict-yes').disabled = working || !dialogConsent?.canTerminate;
   $('config-file').textContent = state.configFile;
+  $('application-name').textContent = typeof state.application?.name === 'string' ? state.application.name.slice(0, 256) : '不可用';
+  $('application-pid').textContent = Number.isSafeInteger(state.application?.pid) && state.application.pid > 0 ? String(state.application.pid) : '不可用';
+  $('application-executable').textContent = typeof state.application?.executable === 'string' ? state.application.executable.slice(0, 32768) : '不可用';
   if (!webDirty) { $('web-port').value = state.web.port; $('web-auth-enabled').checked = state.web.authEnabled; }
   $('web-token-field').hidden = !$('web-auth-enabled').checked;
   for (const input of document.querySelectorAll('#web-form input, #web-form button')) input.disabled = working;

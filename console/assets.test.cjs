@@ -36,6 +36,13 @@ test('manual login and pending web settings are available without exposing a tok
   assert.match(html, /重启 Codex/);
 });
 
+test('application identity belongs only on Settings beside portable configuration', () => {
+  const html = require('./assets.cjs').loadAssets()['/'].body.toString();
+  const settings = html.split('id="page-settings"')[1].split('id="page-records"')[0];
+  for (const id of ['application-name', 'application-pid', 'application-executable']) assert.match(settings, new RegExp('id="' + id + '"'));
+  assert.doesNotMatch(html.split('id="page-dashboard"')[1].split('id="page-settings"')[0], /id="application-/);
+});
+
 test('direct settings, records and help pages share only the whitelisted console shell', async t => {
   const assets = require('./assets.cjs').loadAssets();
   const server = require('./server.cjs').createManagementServer({token: 'test', assets, controller: {status: () => ({revision: 0})}});

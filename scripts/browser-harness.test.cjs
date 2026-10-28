@@ -46,6 +46,20 @@ test('packaged browser runner selects the explicitly supplied EXE and retains ow
   assert.equal(result.terminated, true);
 });
 
+test('gateway force browser selects the explicitly supplied packaged executable', async () => {
+  const executable = path.resolve('.verification/isolated-MagpieFilter.exe'), stop = new Error('fixture boundary');
+  let fixtureOptions;
+  const context = {module: {exports: {}}, __dirname, process: {env: {}}, require: name => {
+    if (name === 'playwright') return {chromium: {}};
+    if (name === './serve-ui-fixture.cjs') return {createUIFixture: async options => { fixtureOptions = options; throw stop; }};
+    return require(name);
+  }};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'run-gateway-browser.cjs'), 'utf8'), context);
+  await assert.rejects(context.module.exports.main({executable}), error => error === stop);
+  assert.equal(fixtureOptions.executable, executable);
+  assert.equal(fixtureOptions.authEnabled, false);
+});
+
 test('imported fixture ignores the consumers command-line arguments', async () => {
   const {spawnSync} = require('node:child_process');
   const code = `process.argv[2] = 'nonexistent-consumer-argument.exe';
