@@ -48,7 +48,13 @@ function createLogWriter(filename, {maxBytes = 1024 * 1024, retainBytes = 512 * 
   };
   const flush = () => {
     if (!pending && queue.length) {
-      pending = new Promise(resolve => setImmediate(resolve)).then(drain).finally(() => { pending = null; });
+      pending = new Promise((resolve, reject) => setImmediate(async () => {
+        try {
+          do { await drain(); } while (queue.length);
+          // Release ownership and settle together, with no promise handoff window.
+          pending = null; resolve();
+        } catch (error) { pending = null; reject(error); }
+      }));
     }
     return pending || Promise.resolve();
   };

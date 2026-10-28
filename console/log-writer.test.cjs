@@ -57,3 +57,31 @@ test('queue bounds retained line objects as well as bytes and rejects empty writ
   for (const options of [{maxBytes: 0}, {maxQueueBytes: NaN}, {retainBytes: 1024 * 1024}, {maxQueueLines: -1}])
     assert.throws(() => api.createLogWriter(filename, options), /limit|tail/i);
 });
+
+for (const closeLate of [false, true]) {
+  test(`completion-window write is covered by ${closeLate ? 'close' : 'flush'} without a second drain call`, async t => {
+    const filename = path.join(fixture(t), 'console.log');
+    let first = true, lateAccepted, closing;
+    // Keep real file effects while deterministically opening the append-completion microtask window.
+    t.mock.method(fs.promises, 'appendFile', (file, bytes) => {
+      fs.appendFileSync(file, bytes);
+      if (first) {
+        first = false;
+        queueMicrotask(() => queueMicrotask(() => {
+          lateAccepted = w.write('late\n');
+          if (closeLate) closing = w.close();
+        }));
+      }
+      return Promise.resolve();
+    });
+    const w = api.createLogWriter(filename);
+    assert.equal(w.write('first\n'), true);
+    const flushing = w.flush();
+    await flushing;
+    if (closeLate) await closing;
+    assert.equal(lateAccepted, true);
+    assert.equal(fs.readFileSync(filename, 'utf8'), 'first\nlate\n');
+    assert.equal(w.diagnostics.queuedBytes, 0); assert.equal(w.diagnostics.queuedLines, 0);
+    assert.equal(w.diagnostics.closed, closeLate);
+  });
+}
