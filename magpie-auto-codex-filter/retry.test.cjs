@@ -140,22 +140,55 @@ test('persistent response.failed without details exhausts the existing transport
   assert.equal((await health()).stats.transportRetryExhausted, 1);
 });
 
+async function listenForFetch(server) {
+  // All fetch-blocked ports are <=10080; avoid them without changing production networking.
+  for (let attempt = 0; attempt < 100; attempt++) {
+    server.listen(attempt === 0 ? 0 : 49152 + Math.floor(Math.random() * 16384), '127.0.0.1');
+    try { await once(server, 'listening'); }
+    catch (error) { if (error.code === 'EADDRINUSE') continue; throw error; }
+    if (server.address().port > 10080) return;
+    await new Promise(resolve => server.close(resolve));
+  }
+  throw new Error('Could not allocate a fetch-safe test port.');
+}
+
 async function fixture(t, handler, log = () => {}, options = {}) {
   const upstream = http.createServer(handler);
-  upstream.listen(0, '127.0.0.1');
-  await once(upstream, 'listening');
+  await listenForFetch(upstream);
   // Short waits exercise the real retry loop; policy waits are checked separately.
   const proxy = makeProxy({getUpstream: () => 'http://127.0.0.1:' + upstream.address().port, log,
     retryDelay: () => 10, heartbeatMs: 10, ...options});
-  proxy.listen(0, '127.0.0.1');
-  await once(proxy, 'listening');
   t.after(async () => {
     proxy.closeAllConnections(); upstream.closeAllConnections();
     await Promise.all([new Promise(resolve => proxy.close(resolve)), new Promise(resolve => upstream.close(resolve))]);
   });
+  await listenForFetch(proxy);
   const origin = 'http://127.0.0.1:' + proxy.address().port;
   return {origin, health: async () => (await fetch(origin + ADMIN + '/health')).json()};
 }
+
+test('retry fixture rebinds a fetch-blocked ephemeral port before making requests', async t => {
+  const realCreate = http.createServer;
+  let servers = 0, proxyBinds = 0;
+  http.createServer = (...args) => {
+    const server = realCreate(...args);
+    if (++servers === 2) {
+      const realListen = server.listen, realAddress = server.address;
+      server.listen = function (...args) { proxyBinds++; return realListen.apply(this, args); };
+      server.address = function () {
+        const address = realAddress.call(this);
+        return proxyBinds === 1 && address ? {...address, port: 10080} : address;
+      };
+    }
+    return server;
+  };
+  let origin;
+  try { ({origin} = await fixture(t, (req, res) => { req.resume(); res.end('fixture-safe'); })); }
+  finally { http.createServer = realCreate; }
+  assert.ok(proxyBinds >= 2, 'Fetch-blocked listener must be closed and rebound');
+  assert.ok(Number(new URL(origin).port) > 10080);
+  assert.equal(await (await fetch(origin + '/responses', {method: 'POST', body: '{}'})).text(), 'fixture-safe');
+});
 
 test('resource rejection retries invisibly with identical history; output waits for completion', {timeout: 10000}, async t => {
   const received = [];
