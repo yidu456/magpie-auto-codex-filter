@@ -4,10 +4,10 @@
 Preserve the completed dev console and adapt selected V11 capabilities on dev-2, with a verified commit per step.
 
 ## Next Step
-Phase19 sourcepushcomplete: verifiedSSHHost/accountyidu456 andlocalidentity used to fast-forwarddev-2 toyidu456/magpie-auto-codex-filter. Remote sourceheadb5de91d verified; main/tags/history/EXEs preserved andallruntimefilesexcluded. CIcompletionnotclaimed. Phase18 source/packagedacceptancepassed; latercandidateconfig/logprovenanceunconfirmed, preserveunread/untouched andleaveclean-outputrecordpending.
+Phase20: record source acceptance, then atomicpush dev-2 with explicit395174d force-with-lease plus newannotatedv1.0.0 viaSSHHostyidu456. Browserfix83ec7b9 fullsuite450total448pass0fail2skip andindependentreview satisfied; versionc8957f5 aligned. Phase22 exact7chartidentityrewrite approved; verifyremoteattribution andpreservedmain/oldtags, thenwatchnativeformalbuild/publication. Userruntime untouched.
 
 ## Current Phase
-Phase 19
+Phase 20
 
 ## Phases
 
@@ -126,3 +126,28 @@ Phase 19
 - Verifyremotebranchhead andpreservedrefs; CIstartisnotCIcompletion. Keepunconfirmeddev-5runtimefilesunread/untouched.
 
 - Phase19 result: SSHyidu456 accountverified; sourcebranch50b0bf4 ->b5de91d pushedfast-forward andremoteSHAverified. Newrecordauthorship/committeryidu456 withverifiedpublicnoreplyID, historicalcommitunchanged. Remote maincd68b072,oldtag2bf245cf,newtagad8b0067 allpreserved. Fresh17focused/sourcehashgatepass. No EXE/runtimeupload,no tag/Releasechange,unknownruntimefilesuntouched. Finalcompletionrecord follows on samebranch; hostedCIcompletionpending.
+
+### Phase 20: Formal version 1.0.0 build and publication
+**Status:** in_progress
+- User requests formal1.0.0 build; latest source395174d hostedrun40860730674 completed success. New v1.0.0 absent locally/remotely; branch synchronized and main/oldtags preserved.
+- Step1: update package/lock version only with npm, refresh source manifest; validate semver/native numeric version, full local suite and independent review. No dependency/application/workflow change.
+- Step2: commit reviewed metadata as yidu456, create annotated v1.0.0, atomically push only dev-2 plus that tag via Hostyidu456 without force/followtags.
+- Step3: inspect four native tests/build/package/extracted smoke/consent jobs and gated publish; verify non-draft/non-prerelease/latest Release and exact eight assets/checksums. No local EXE rebuild or user runtime access.
+- Prior dev-5 runtime provenance remains unresolved and independent of fresh hosted builds; retain unread/untouched.
+- User reports GitHub still shows didingqd and requests yidu456 attribution. API verifies old codecommitf59a352 author/committerdidingqd via legacy8oo email, new395174d author/committeryidu456. Hold tag/push pending historical rewrite scope confirmation; switching SSH does not change historical author metadata.
+- User explicitly confirms bounded chart-history rewrite plus force-update dev-2 on2026-10-29. Step2 now uses explicit force-with-lease for branch, atomic newtag push and nofollowtags; main/oldtags remain unchanged. Prerelease-era ancestors before50b0bf4 remain unchanged.
+
+### Phase 21: Open browser once per actual service startup
+**Status:** complete
+- Diagnose only production browser dispatch callers; no user runtime/process access. main.cjs has startup dispatch and duplicate-singleton dispatch; no periodic browser dispatch found.
+- TDD real main/config/server in owned temp fixture with only OS browser launch intercepted; assert firststartup1open, repeated/concurrent duplicates0extra, polling0extra, no-open0, true restart opens once.
+- Remove duplicate browser dispatch only, keep identity/auth verification and safe singleton behavior; update README relaunch instructions and strict source manifest.
+- Focused/full tests, independent review and separate fixcommit before formaltag.
+- Acceptance: fix83ec7b9 asyidu456; regression4/4,focused27/27, full450total448pass0fail2skip177176ms, finalmanifest3/3 andwhitespacepass. Independentreview nofindings; fullsuitecondition satisfied. Actualuser'strigger notinspected; verifiedduplicatelaunchpath corrected withouttimerchanges.
+
+### Phase 22: Bounded chart commit attribution
+**Status:** in_progress
+- Rewrite exactly seven commits975a40d throughf59a352 after50b0bf4 to verifiedyidu456 author/committer. Rechain descendants without changing their metadata/content; preserve original trees/messages/dates and all earlier commits.
+- Save local backupref/privateold-newmap; CASupdate localdev-2 only if tip/tree verified. Dirty release metadata/fix edits remain untouched. No amend/reset/checkout/history deletion.
+- Review mapping, preserved refs and source tree; force-with-lease remote395174d only when all gatespass, atomicwithv1.0.0. GitHub verify rewritten codeauthor/committeryidu456.
+- Localrewrite395174d ->a7e1475 verified and independentlyapproved; newchartheads3a9f445/0ebd111/4803239/0c7ceea/f68d53f/92538cf/3767213. Backuprefs/codex-backups/dev-2-before-chart-attribution-20261029 preserved originaltip; allotherrefs anddirtyfilebytesunchanged. Remote notyetmodified.
