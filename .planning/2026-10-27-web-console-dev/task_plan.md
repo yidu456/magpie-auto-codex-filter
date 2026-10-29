@@ -4,7 +4,7 @@
 Preserve the completed dev console and adapt selected V11 capabilities on dev-2, with a verified commit per step.
 
 ## Next Step
-Phase15: version/lock/source hashes aligned at0.1.0-dev.1; focused22/22 and fresh full437total435pass0fail2skip158570ms, independent metadata review approved. Commit metadata, create annotated v0.1.0-dev.1 and atomic branch/new-tag push. Verify tag Actions including publish, exact eight Release assets and aggregate checksums. Preserve oldtag/main/local EXEs.
+Phase15 complete: annotated v0.1.0-dev.1 atc8d5bd7 published as a non-draft prerelease by tag run40820263107; four native jobs plus publish pass. Branch40820262868 also passes. Exact eight uploaded assets verified; downloaded aggregate checksum file hash and all seven rows match GitHub asset digests. Oldtag/main/local EXEs preserved. Final release evidence independently reviewed; await the next requested development step.
 
 ## Current Phase
 Phase 15
@@ -86,8 +86,10 @@ Phase 15
 - Phase14 final acceptance at a31156b: local435pass2skip; Windows hosted435pass2skip, Linux/macOS each432pass5skip, all0fail/437total. Native40817990959 complete success including four uploads; downloaded archives verified. Scoped independent reviews and final evidence-only review approved.
 
 ### Phase 15: New prerelease tag and hosted publication
-**Status:** in_progress
+**Status:** complete
 - User authorized new release tag on2026-10-29; selected v0.1.0-dev.1 from the preceding recommendation.
 - Step1: npm version --no-git-tag-version --ignore-scripts updates package.json and package-lock.json; refresh SHA256SUMS.txt. Validate tag/version/lock alignment, native Windows version encoding and full local suite; independent review. No dependency, application or workflow change.
 - Step2: commit metadata on dev-2, verify new tag absent locally/remotely, create annotated tag, atomic push of dev-2 plus the new tag only. Never move old tag/main.
 - Step3: watch tag Actions through four native suite/build/package/extracted smoke/consent/upload jobs and publish; verify non-draft prerelease tag, exact eight assets and published checksums. Retain failed/draft evidence without bypass if any gate fails. No local binary rebuild, real-provider calls or user-process termination.
+
+- Phase15 final acceptance: Release https://github.com/yidu456/magpie-auto-codex-filter/releases/tag/v0.1.0-dev.1 is non-draft/prerelease, exactly8assets. Tag40820263107 and branch40820262868 succeed; Windows435pass2skip and Unix432pass5skip/437total, all0fail. Downloaded629-byte aggregate SHA256SUMS matches its GitHub digest; seven rows match the other uploaded asset digests. No full binary redownload claimed.

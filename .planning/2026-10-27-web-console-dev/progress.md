@@ -90,3 +90,9 @@
 - Phase15 started by explicit new-release-tag request. Clean dev-2 at63415b4; local/remote v0.1.0-dev.1 absent, no existing Release, origin yidu456 confirmed. Scope is version/lock/source-hash metadata and new tag-triggered existing publication; old tag/main/EXEs preserved.
 
 - Phase15 Step1 verified: npm-generated package/lock0.1.0-dev.1, strict manifest22focused tests pass; full437total435pass0fail2skip158570ms at stable public bytes. Independent metadata review approved. Prior native package instructions and Unix0755 launcher modes manually inspected read-only; no application/dependency/workflow change. Commit/new annotated tag/atomic push next.
+
+- Phase15 Step2 complete: version commitc8d5bd7, annotated tagad8b0067 points toc8d5bd7. Atomic explicit branch+newtag push succeeded; remote oldtag2bf245cf/maincd68b072 preserved. Tag run40820263107 and branch40820262868 started. Publication and checksum verification pending; tag existence alone is not a Release claim.
+
+- Phase15 published: tag40820263107 atc8d5bd7 complete success including four native jobs and publish; branch40820262868 also successful. Live Release API confirms v0.1.0-dev.1 non-draft prerelease with exactly8uploaded assets. Downloaded629-byte SHA256SUMS self-hash matches GitHub asset digest; all7rows match corresponding uploaded asset digests. Verification JSON/metadata/tag logs retained privately under .superpowers/sdd/2026-10-29-release-dev-1. Oldtag/main and both delivered EXE hashes preserved. No PAT, manual release bypass, local binary rebuild or user-process action. Final evidence-only review next.
+
+- Phase15 final evidence-only review approved: saved release metadata,629-byte checksum/self-digest+7asset-digest comparisons, native totals, annotated tag target and preserved refs/EXE hashes independently checked. Only planning bookkeeping changes after publishedc8d5bd7; public source, release assets and tag are frozen.
