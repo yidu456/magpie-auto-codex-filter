@@ -14,9 +14,9 @@ async function close(server) {
   server.closeAllConnections?.();
   await new Promise(resolve => server.close(resolve));
 }
-function call(origin, route, {body, headers = {}, method = 'POST'} = {}) {
+function call(origin, route, {body, headers = {}, method = 'POST', agent} = {}) {
   return new Promise((resolve, reject) => {
-    const request = http.request(origin + route, {method, headers}, res => {
+    const request = http.request(origin + route, {method, headers, agent}, res => {
       const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
       res.on('error', reject);

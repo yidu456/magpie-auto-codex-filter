@@ -114,7 +114,24 @@ test('actual fixture cleanup kills only its own console and closes its own mock 
   await fixture.close(); await fixture.close();
   assert.throws(() => process.kill(pid, 0), /ESRCH|no such process/i);
   assert.equal(fixture.upstream.listening, false);
-  await assert.rejects(call(fixture.origin, '/', {method: 'GET'}), /ECONNREFUSED/);
+  await assert.rejects(call(fixture.origin, '/', {method: 'GET', agent: false}), {code: 'ECONNREFUSED'});
   assert.equal((await call(unrelatedOrigin, '/', {method: 'GET'})).body, 'unrelated');
   assert.match(fs.readFileSync(path.join(fixture.runtime, 'mock-codex.toml'), 'utf8'), /model_providers.mock/);
+});
+
+test('fresh teardown requests bypass an existing HTTP keep-alive pool', async t => {
+  const agent = new http.Agent({keepAlive: true}); t.after(() => agent.destroy());
+  const server = http.createServer((req, res) => res.end('live'));
+  const origin = await listen(server); t.after(() => close(server));
+  assert.equal((await call(origin, '/', {method: 'GET', agent})).body, 'live');
+  const reused = [];
+  t.mock.method(http, 'request', (original => (...args) => {
+    const request = original(...args); reused.push(request.reusedSocket); return request;
+  })(http.request));
+  assert.equal((await call(origin, '/', {method: 'GET', agent})).body, 'live');
+  assert.deepEqual(reused, [true], 'The fixture must actually have a reusable idle connection');
+  assert.equal((await call(origin, '/', {method: 'GET', agent: false})).body, 'live');
+  assert.deepEqual(reused, [true, false], 'The teardown probe must open a new socket');
+  await close(server);
+  await assert.rejects(call(origin, '/', {method: 'GET', agent: false}), {code: 'ECONNREFUSED'});
 });

@@ -229,14 +229,20 @@ test('wall-clock rollback cannot enlarge native release inspection timeouts', as
   assert.ok(timeouts.every(timeout => Number.isInteger(timeout) && timeout > 0 && timeout <= 5000));
 });
 
-function linuxFixture({user = '1000', ownerUser = user, procName = 'fixture', inaccessible = false, duplicate = false, killError = null, replacement = null, lateReplacement = false, metadataReplacement = null} = {}) {
+function linuxFixture({user = '1000', ownerUser = user, procName = 'fixture', inaccessible = false, duplicate = false, killError = null, replacement = null, lateReplacement = false, metadataReplacement = null, postKill = ['free']} = {}) {
   let live = true;
   const kills = [], signals = [];
   let socketReads = 0, lateChanged = false;
+  let time = 0, observation = 'live', observations = 0;
   const header = ' sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode\n';
   const stat = (pid, parent, name, started) => `${pid} (${name}) S ${parent} ${Array(17).fill('0').join(' ')} ${started} 0\n`;
   const readFile = async file => {
-    if (file === '/proc/net/tcp') { socketReads++; return header + (live ? '0: 0100007F:4711 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 12345 1\n' : ''); }
+    if (file === '/proc/net/tcp') {
+      socketReads++;
+      if (!live) observation = postKill[Math.min(observations++, postKill.length - 1)];
+      if (observation === 'failed-table') throw Object.assign(new Error('denied'), {code: 'EACCES'});
+      return header + (live || observation !== 'free' ? '0: 0100007F:4711 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 12345 1\n' : '');
+    }
     if (file === '/proc/net/tcp6') return header;
     if (file === '/proc/sys/kernel/random/boot_id') return '11111111-1111-1111-1111-111111111111\n';
     if (file === '/proc/321/stat') return stat(321, 111, procName, lateChanged ? 7654329 : replacement && socketReads >= 3 ? replacement : 7654321);
@@ -244,6 +250,7 @@ function linuxFixture({user = '1000', ownerUser = user, procName = 'fixture', in
     if (file === '/proc/100/stat') return stat(100, 99, 'node', 500);
     if (file === '/proc/99/stat') { if (lateReplacement && socketReads >= 3) lateChanged = true; return stat(99, 1, 'shell', 400); }
     if (/^\/proc\/32[12]\/status$/.test(file)) {
+      if (observation === 'vanished-metadata') throw Object.assign(new Error('exited'), {code: 'ENOENT'});
       if (metadataReplacement === 'status' && socketReads >= 3) lateChanged = true;
       return `Name:\tfixture\nUid:\t${ownerUser}\t${ownerUser}\t${ownerUser}\t${ownerUser}\n`;
     }
@@ -251,7 +258,8 @@ function linuxFixture({user = '1000', ownerUser = user, procName = 'fixture', in
   };
   const adapter = createPortOwner({platform: 'linux', currentPid: 100, currentPpid: 99, currentUser: user, readFile,
     readdir: async directory => {
-      if (directory === '/proc') return ['321', ...(duplicate ? ['322'] : []), '100', '99', '1', 'net'];
+      if (directory === '/proc') return [observation === 'new-owner' ? '322' : '321', ...(duplicate ? ['322'] : []), '100', '99', '1', 'net'];
+      if (observation === 'unresolved' && directory.endsWith('/fd')) throw Object.assign(new Error('exited'), {code: 'ENOENT'});
       if (directory === '/proc/321/fd' && !inaccessible) return ['7'];
       if (directory === '/proc/322/fd') return ['8'];
       throw Object.assign(new Error('denied'), {code: 'EACCES'});
@@ -262,9 +270,48 @@ function linuxFixture({user = '1000', ownerUser = user, procName = 'fixture', in
       }
       return 'socket:[12345]';
     },
-    killProcess: (pid, signal) => { if (killError) throw Object.assign(new Error('denied SECRET'), {code: killError}); kills.push(pid); signals.push(signal); live = false; }, sleep: async () => {}});
-  return {adapter, kills, signals};
+    killProcess: (pid, signal) => { if (killError) throw Object.assign(new Error('denied SECRET'), {code: killError}); kills.push(pid); signals.push(signal); live = false; },
+    now: () => time, sleep: async ms => { time += ms; }});
+  return {adapter, kills, signals, elapsed: () => time, observations: () => observations};
 }
+
+for (const gap of ['unresolved', 'vanished-metadata', 'failed-table']) {
+  test(`Linux post-kill ${gap} is retried until a fresh successful empty socket inspection`, async () => {
+    const {adapter, kills, signals, observations} = linuxFixture({postKill: [gap, 'free']});
+    const owner = (await adapter.inspect(18193)).owner;
+    assert.deepEqual(await adapter.terminate(18193, owner), {port: 18193, released: true});
+    assert.equal(observations(), 2);
+    assert.deepEqual(kills, [321]); assert.deepEqual(signals, ['SIGKILL']);
+    await assert.rejects(adapter.terminate(18193, owner), {code: 'PORT_OWNER_UNSAFE'});
+  });
+  test(`Linux persistent post-kill ${gap} fails within the existing release deadline without a second kill`, async () => {
+    const {adapter, kills, elapsed} = linuxFixture({postKill: [gap]});
+    const owner = (await adapter.inspect(18193)).owner;
+    await assert.rejects(adapter.terminate(18193, owner), {code: 'PORT_RELEASE_TIMEOUT'});
+    assert.equal(elapsed(), 5000); assert.deepEqual(kills, [321]);
+  });
+}
+
+test('Linux new owner after a post-kill ownership gap needs fresh consent, never another kill', async () => {
+  const {adapter, kills} = linuxFixture({postKill: ['unresolved', 'new-owner']});
+  const owner = (await adapter.inspect(18193)).owner;
+  await assert.rejects(adapter.terminate(18193, owner), error => error.code === 'PORT_OWNER_CHANGED' && error.conflict.owner?.pid === 322);
+  assert.deepEqual(kills, [321]);
+  await assert.rejects(adapter.terminate(18193, owner), {code: 'PORT_OWNER_UNSAFE'});
+});
+
+test('Windows post-kill inspection failure still fails immediately without a second kill', async () => {
+  let killed = false;
+  const adapter = createPortOwner({platform: 'win32', currentPid: 100, currentPpid: 99,
+    runCommand: async (_file, args) => {
+      if (Buffer.from(args.at(-1), 'base64').toString('utf16le').includes('$expected =')) { killed = true; return '{"status":"terminated"}'; }
+      if (killed) throw Object.assign(new Error('denied'), {code: 'EACCES'});
+      return winSnapshot([winOwner]);
+    }, sleep: async () => assert.fail('Windows inspection failure must not be retried')});
+  const owner = (await adapter.inspect(18193)).owner;
+  await assert.rejects(adapter.terminate(18193, owner), {code: 'PORT_INSPECTION_FAILED'});
+  await assert.rejects(adapter.terminate(18193, owner), {code: 'PORT_OWNER_UNSAFE'});
+});
 
 test('Linux procfs discovers socket owners and revalidates full same-user identity before one PID SIGKILL', async () => {
   const {adapter, kills, signals} = linuxFixture();
@@ -331,6 +378,16 @@ test('macOS coarse ps identity is display-only and never terminates an unsupport
   await assert.rejects(adapter.terminate(18193, result.owner), {code: 'PORT_OWNER_UNSAFE'});
   assert.equal(kills.length, 0);
   assert.ok(commands.every(({file}) => file === '/usr/sbin/lsof' || file === '/bin/ps'));
+});
+
+test('macOS ancestor basename currently fails closed even when the target executable is absolute', async () => {
+  const adapter = createPortOwner({platform: 'darwin', currentPid: 100, currentPpid: 99, currentUser: '501',
+    runCommand: async (file, args) => {
+      if (file === '/usr/sbin/lsof') return 'p321\nf7\nn*:18193\n';
+      const pid = Number(args[1]);
+      return `${pid} ${pid === 321 ? 111 : 99} 501 Wed Oct 28 08:09:10 2026 ${pid === 321 ? '/opt/fixture' : 'node'}\n`;
+    }, killProcess: () => assert.fail('macOS inspection must never kill')});
+  assert.deepEqual(await adapter.inspect(18193), {port: 18193, owner: null, canTerminate: false, reason: 'PORT_INSPECTION_FAILED'});
 });
 
 test('native Windows terminates only a tracked disposable listener while an unrelated fixture survives', {skip: process.platform !== 'win32', timeout: 120000}, async t => {
@@ -400,7 +457,8 @@ test('native Windows terminates only a tracked disposable listener while an unre
 
 test('native Unix inspects a tracked listener, Linux revalidates before one kill and macOS stays display-only',
   {skip: !['linux', 'darwin'].includes(process.platform), timeout: 90000}, async t => {
-    const {spawn} = require('node:child_process'), {once} = require('node:events');
+    const {spawn, execFile} = require('node:child_process'), {once} = require('node:events');
+    const execute = require('node:util').promisify(execFile);
     const children = [];
     t.after(async () => {
       for (const child of children) if (child.exitCode === null && child.signalCode === null) {
@@ -413,11 +471,35 @@ test('native Unix inspects a tracked listener, Linux revalidates before one kill
       const [data] = await once(child.stdout, 'data'); return {child, port: Number(String(data).trim())};
     };
     const target = await launch(), other = await launch();
-    const killed = [], adapter = createPortOwner({killProcess: (pid, signal) => {
+    const diagnostics = [];
+    const record = (file, args, result) => {
+      if (diagnostics.length < 16) diagnostics.push({file, args, code: result.code,
+        stdout: String(result.stdout || '').slice(0, 4096), stderr: String(result.stderr || '').slice(0, 4096)});
+    };
+    const runCommand = process.platform !== 'darwin' ? undefined : async (file, args, options) => {
+      try { const result = await execute(file, args, options); record(file, args, result); return result.stdout; }
+      catch (error) { record(file, args, error); throw error; }
+    };
+    const killed = [], adapter = createPortOwner({runCommand, killProcess: (pid, signal) => {
       assert.equal(pid, target.child.pid); assert.equal(signal, 'SIGKILL');
       killed.push(pid); process.kill(pid, signal);
     }});
     const conflict = await adapter.inspect(target.port);
+    if (process.platform === 'darwin' && conflict.owner?.pid !== target.child.pid) {
+      const commands = [
+        ...[target.child.pid, process.pid, process.ppid].map(pid => ['/bin/ps', ['-p', String(pid), '-o', 'pid=,ppid=,uid=,lstart=,comm=']])
+      ];
+      t.diagnostic('Tracked macOS owner failure: ' + JSON.stringify(conflict));
+      for (const diagnostic of diagnostics) t.diagnostic(JSON.stringify(diagnostic));
+      for (const [file, args] of commands) {
+        try {
+          const {stdout, stderr} = await execute(file, args, {encoding: 'utf8', timeout: 2000, maxBuffer: 1024 * 1024, shell: false});
+          t.diagnostic(JSON.stringify({file, args, stdout: stdout.slice(0, 4096), stderr: stderr.slice(0, 4096)}));
+        } catch (error) {
+          t.diagnostic(JSON.stringify({file, args, code: error.code, stdout: String(error.stdout || '').slice(0, 4096), stderr: String(error.stderr || '').slice(0, 4096)}));
+        }
+      }
+    }
     assert.equal(conflict.owner?.pid, target.child.pid);
     assert.ok(conflict.owner.executable.startsWith('/')); assert.ok(conflict.owner.started);
     if (process.platform === 'darwin' || process.getuid() === 0) {

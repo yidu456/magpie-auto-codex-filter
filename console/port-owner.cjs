@@ -381,9 +381,13 @@ function createPortOwner({platform = process.platform, currentPid = process.pid,
       const conflict = await inspectWithin(port, remaining, 'PORT_RELEASE_TIMEOUT');
       if (conflict.reason === 'PORT_RELEASE_TIMEOUT') throw fail('PORT_RELEASE_TIMEOUT');
       if (!conflict.owner && !conflict.reason) return {port, released: true};
-      if (conflict.reason === 'PORT_INSPECTION_FAILED' || conflict.reason === 'OWNERSHIP_UNAVAILABLE') throw fail('PORT_INSPECTION_FAILED');
-      const record = conflict.owner && known.get(conflict.owner);
-      if (!record || !sameIdentity(record.raw, expected.raw)) throw fail('PORT_OWNER_CHANGED', conflict);
+      if (conflict.reason === 'PORT_INSPECTION_FAILED' || conflict.reason === 'OWNERSHIP_UNAVAILABLE') {
+        // After SIGKILL procfs can retain a socket while its owning fds/metadata disappear.
+        if (platform !== 'linux') throw fail('PORT_INSPECTION_FAILED');
+      } else {
+        const record = conflict.owner && known.get(conflict.owner);
+        if (!record || !sameIdentity(record.raw, expected.raw)) throw fail('PORT_OWNER_CHANGED', conflict);
+      }
       if (now() >= deadline) break;
       await sleep(100);
     }

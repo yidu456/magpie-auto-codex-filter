@@ -1,0 +1,4 @@
+# Source checksums cover actual bytes, independent of the host's autocrlf setting.
+* text=auto eol=lf
+# Existing Windows launchers intentionally use CRLF on every host.
+*.cmd text eol=crlf
