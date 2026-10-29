@@ -90,37 +90,97 @@ function svgElement(tag, attributes = {}, text) {
   if (text !== undefined) node.textContent = text;
   return node;
 }
-function chartShell(id, title) {
+function chartShell(id, title, width = 560, height = 190) {
   const container = $(id); container.replaceChildren();
-  const svg = svgElement('svg', {viewBox: '0 0 560 190', role: 'img', 'aria-label': title});
+  const svg = svgElement('svg', {viewBox: '0 0 ' + width + ' ' + height, role: 'img', 'aria-label': title});
   svg.append(svgElement('title', {}, title)); container.append(svg); return svg;
 }
 function emptyChart(id, message) {
   const container = $(id), text = document.createElement('p');
   text.className = 'empty-chart'; text.textContent = message; container.replaceChildren(text);
 }
+function chartSegments(series, key) {
+  const parts = []; let part = [], previous = -1;
+  for (const bucket of series) {
+    if (!bucket || !finite(bucket.minute) || !Number.isInteger(bucket.minute) || bucket.minute % 60000 || bucket.minute <= previous) continue;
+    const adjacent = bucket.minute === previous + 60000; previous = bucket.minute;
+    if (!finite(bucket[key]) || !adjacent) { if (part.length) parts.push(part); part = []; }
+    if (finite(bucket[key])) part.push(bucket);
+  }
+  if (part.length) parts.push(part); return parts;
+}
+function smoothPath(points) {
+  if (!points.length) return '';
+  let path = 'M' + points[0].x + ',' + points[0].y;
+  if (points.length === 1) return path;
+  const slopes = points.slice(1).map((b, i) => (b.y - points[i].y) / (b.x - points[i].x));
+  const tangents = points.map((_, i) => {
+    if (!i) return slopes[0]; if (i === points.length - 1) return slopes.at(-1);
+    const a = slopes[i - 1], b = slopes[i]; return a * b > 0 ? 2 * a * b / (a + b) : 0;
+  });
+  // Bound the connection to measured extrema; smoothing must not invent peaks.
+  slopes.forEach((slope, i) => {
+    if (!slope) { tangents[i] = tangents[i + 1] = 0; return; }
+    const a = tangents[i] / slope, b = tangents[i + 1] / slope, length = Math.hypot(a, b);
+    if (length > 3) { tangents[i] = 3 * a / length * slope; tangents[i + 1] = 3 * b / length * slope; }
+  });
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1], b = points[i], third = (b.x - a.x) / 3;
+    path += ` C${a.x + third},${a.y + third * tangents[i - 1]} ${b.x - third},${b.y - third * tangents[i]} ${b.x},${b.y}`;
+  }
+  return path;
+}
+const trendViews = new Map();
 function trend(id, series, fields) {
+  let view = trendViews.get(id);
+  if (!view) {
+    view = {}; trendViews.set(id, view);
+    view.observer = new ResizeObserver(() => { if (view.series) drawTrend(id, view); });
+    view.observer.observe($(id));
+  }
+  Object.assign(view, {series, fields}); drawTrend(id, view);
+}
+function drawTrend(id, view) {
+  const {series, fields} = view;
   if (!series.length || !series.some(bucket => fields.some(([key]) => finite(bucket[key])))) {
     emptyChart(id, '暂无可用分钟观测；不会补造缺失数据。'); return;
   }
-  const svg = chartShell(id, fields.map(([, name]) => name).join('、') + '分钟趋势；具体值见下方表格');
+  const width = $(id).clientWidth; if (!width) return;
+  const height = 290, left = 52, right = width - 14, top = 30, bottom = 248;
+  const svg = chartShell(id, fields.map(([, name]) => name).join('、') + '分钟趋势，共用线性刻度；平滑不改变分钟值', width, height);
   const max = Math.max(1, ...series.flatMap(bucket => fields.map(([key]) => finite(bucket[key]) ? bucket[key] : 0)));
+  const magnitude = 10 ** Math.floor(Math.log10(max / 4)), step = Math.max(1, Math.ceil(max * 1.1 / 4 / magnitude) * magnitude), ceiling = step * 4;
   const first = series[0].minute, last = series.at(-1).minute;
-  const x = minute => first === last ? 294 : 48 + (minute - first) / (last - first) * 492;
-  const y = value => 145 - value / max * 118;
-  svg.append(svgElement('path', {d: 'M48 20V145H540', class: 'chart-axis'}), svgElement('text', {x: 40, y: 31, 'text-anchor': 'end', class: 'chart-label'}, number(max)), svgElement('text', {x: 40, y: 149, 'text-anchor': 'end', class: 'chart-label'}, '0'));
+  const x = minute => first === last ? (left + right) / 2 : left + 4 + (minute - first) / (last - first) * (right - left - 8);
+  const y = value => bottom - value / ceiling * (bottom - top);
+  svg.append(svgElement('text', {x: left, y: 17, class: 'chart-label'}, id === 'token-chart' ? 'Token / 分钟' : '次 / 分钟'));
+  for (let i = 0; i <= 4; i++) {
+    const value = step * i;
+    svg.append(svgElement('line', {x1: left, x2: right, y1: y(value), y2: y(value), class: 'chart-axis'}),
+      svgElement('text', {x: left - 8, y: y(value) + 4, 'text-anchor': 'end', class: 'chart-label'}, value >= 1000 ? number(value / 1000) + 'k' : number(value)));
+  }
+  const legend = document.createElement('div'); legend.className = 'chart-legend';
   fields.forEach(([key, name], index) => {
-    let path = '', connected = false;
-    for (const bucket of series) {
-      if (!finite(bucket[key])) { connected = false; continue; }
-      path += (connected ? 'L' : 'M') + x(bucket.minute) + ' ' + y(bucket[key]); connected = true;
-      const point = svgElement('circle', {cx: x(bucket.minute), cy: y(bucket[key]), r: 3, class: 'chart-point color-' + index});
-      point.append(svgElement('title', {}, time(bucket.minute) + ' ' + name + '：' + number(bucket[key]))); svg.append(point);
+    for (const part of chartSegments(series, key)) {
+      const path = smoothPath(part.map(bucket => ({x: x(bucket.minute), y: y(bucket[key])})));
+      if (id === 'token-chart' && index === 0 && part.length > 1) svg.append(svgElement('path', {d: path + ` L${x(part.at(-1).minute)},${bottom} L${x(part[0].minute)},${bottom} Z`, class: 'chart-area color-' + index}));
+      svg.append(svgElement('path', {d: path, class: 'chart-line color-' + index, 'data-series': key}));
+      if (part.length === 1) {
+        const bucket = part[0], point = svgElement('circle', {cx: x(bucket.minute), cy: y(bucket[key]), r: 3, class: 'chart-point color-' + index});
+        point.append(svgElement('title', {}, time(bucket.minute) + ' ' + name + '：' + number(bucket[key]))); svg.append(point);
+      }
     }
-    svg.append(svgElement('path', {d: path, class: 'chart-line color-' + index}));
-    svg.append(svgElement('text', {x: 48 + index * 158, y: 187, class: 'chart-label color-' + index}, name));
+    const item = document.createElement('span'), swatch = document.createElement('i'); swatch.className = 'legend-swatch color-' + index;
+    item.append(swatch, document.createTextNode(name)); legend.append(item);
   });
-  svg.append(svgElement('text', {x: 48, y: 163, class: 'chart-label'}, time(first)), svgElement('text', {x: 540, y: 163, 'text-anchor': 'end', class: 'chart-label'}, time(last)));
+  $(id).prepend(legend);
+  const tickCount = first === last ? 1 : width < 430 ? 3 : 5;
+  for (let i = 0; i < tickCount; i++) {
+    const minute = tickCount === 1 ? first : first + (last - first) * i / (tickCount - 1);
+    svg.append(svgElement('text', {x: x(minute), y: 274, 'text-anchor': tickCount === 1 ? 'middle' : !i ? 'start' : i === tickCount - 1 ? 'end' : 'middle', class: 'chart-label'}, time(minute).slice(0, 5)));
+  }
+  const detail = document.createElement('p'); detail.id = id + '-detail'; detail.className = 'chart-detail';
+  detail.textContent = '分钟值见精确数据表；平滑曲线仅用于连接观测。'; $(id).append(detail);
 }
 function histogram(id, histogram) {
   const valid = histogram && finite(histogram.count) && histogram.count > 0 && finite(histogram.sumMs)
@@ -172,8 +232,11 @@ function renderMetrics(metrics, diagnostics) {
   dimensions('recovery-kind-rows', retry?.recoveredByKind, true);
   dimensions('error-kind-rows', metrics?.errorsByKind, true); dimensions('error-code-rows', metrics?.errorsByCode);
   dimensions('model-rows', metrics?.byModel, false, '暂无已结束的模型请求。');
-  const series = Array.isArray(metrics?.series) ? metrics.series.slice(-180).filter(bucket => bucket && finite(bucket.minute)) : [];
-  trend('request-chart', series, [['started', '开始请求'], ['failed', '失败'], ['retries', '实际重试']]);
+  const series = []; let previous = -1;
+  for (const bucket of Array.isArray(metrics?.series) ? metrics.series.slice(-180) : []) {
+    if (bucket && finite(bucket.minute) && Number.isInteger(bucket.minute) && !(bucket.minute % 60000) && bucket.minute > previous) { series.push(bucket); previous = bucket.minute; }
+  }
+  trend('request-chart', series, [['success', '成功'], ['failed', '失败'], ['canceled', '取消'], ['unavailable', '不可观测'], ['retries', '实际重试']]);
   trend('token-chart', series, [['inputTokens', '输入 Token'], ['outputTokens', '输出 Token']]);
   $('request-series-summary').textContent = series.length ? series.length + ' 个有事件的分钟窗口；空白分钟不补造事件，数据见表。' : '暂无分钟记录，重启后曲线重新开始。';
   $('token-series-summary').textContent = '只绘制有观测的值；缺失 usage 不当作零。';

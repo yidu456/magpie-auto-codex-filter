@@ -34,11 +34,11 @@
 **Files:** console/ui/app.js, console/ui/app.css, console/ui/index.html, console/charts.test.cjs, SHA256SUMS.txt.
 **Interfaces:** Existing trend(id, series, fields); add pure chartSegments(series,key) and smoothPath(points). Existing renderMetrics supplies five request fields and two usage fields. Preserve histogram until Task3.
 
-- [ ] Write failing tests against actual browser helpers: gaps/null/zero, bounded cubic endpoints/extrema, invalid values, single sample and unsorted/duplicate minutes.
-- [ ] Run node --test console/charts.test.cjs; confirm expected RED.
-- [ ] Implement bounded segments, monotone interpolation, responsive measured-width SVG, five deep-color request curves and two Token curves, independent HTML legends and proper units/grid/ticks. Add bottom detail targets for Task2.
-- [ ] Run focused tests plus assets and strict manifest gates; inspect isolated rendering at desktop/mobile. Update progress and plan.
-- [ ] Request independent review; fix important findings, reverify and commit feat: improve console trend charts.
+- [x] Write failing tests against actual browser helpers: gaps/null/zero, bounded cubic endpoints/extrema, invalid values, single sample and unsorted/duplicate minutes.
+- [x] Run node --test console/charts.test.cjs; confirm expected RED.
+- [x] Implement bounded segments, monotone interpolation, responsive measured-width SVG, five deep-color request curves and two Token curves, independent HTML legends and proper units/grid/ticks. Add bottom detail targets for Task2.
+- [x] Run focused tests plus assets and strict manifest gates; inspect isolated rendering at desktop/mobile. Update progress and plan.
+- [x] Request independent review; fix important findings, reverify and commit feat: improve console trend charts.
 
 ## Task 2: Pointer Popover And Retained Detail
 

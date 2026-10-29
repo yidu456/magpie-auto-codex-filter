@@ -100,3 +100,11 @@
 - Phase16 started2026-10-29: approved preview and exact pointer-near popover/bottom detail requirements recorded. User requests sequential plan and commit per completed item. Clean dev-2 at50b0bf4; selected plan resolved with PLAN_ID. Fresh assets/source-manifest8/8 baseline passes. No production edit yet; plan commit next.
 
 - Phase16 Task0 independent review approved; plan covers measurement/unknown boundaries, pointer popover plus retained bottom detail, mobile/keyboard, fixed240px tables and local commit gates. Plan-only commit, then Task1 RED/GREEN.
+
+- Phase16 Task1 resumed: actual helper tests observed expected RED2 (missing chartSegments/smoothPath), then GREEN2 after segment/interpolation implementation. app.js partial only; CSS/HTML, source manifest, browser/review gates pending. dev-2 HEAD975a40d; own changes app.js and new charts.test.cjs.
+
+- Phase16 Task1 focused11/11 incl source materialization pass. Actual isolated smooth-curve screenshots/width assertions pass1280/736/390/320; reviewed390request and1280Token (null gap preserved). Metrics-only smoke failed at old records850px scroll assertion with1280viewport/928px table container; full harness now running (its earlier navigation selects390viewport). Reviewer spawn failed unsupported inherited high effort; attempted existing ci_review followup instead. No commit yet.
+
+- Phase16 Task1 full isolated browser harness passed all cases/pageErrors[] before interruption; fresh resumed focused11/11 and diff check pass at unchanged public bytes. Existing reviewer followup resumed; pending review/commit.
+
+- Phase16 Task1 independent review approved no actionable findings; reviewer independently ran11focused and inspected320request/desktopToken screenshots. Full isolated harness passed all cases/pageErrors[]. Task1 local commit now; next Task2.
