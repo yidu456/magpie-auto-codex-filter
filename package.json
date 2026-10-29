@@ -1,6 +1,6 @@
 {
   "name": "magpie-filter-console",
-  "version": "0.1.0-dev.1",
+  "version": "1.0.0",
   "private": true,
   "description": "Local Codex/Magpie filter console",
   "license": "MIT",
