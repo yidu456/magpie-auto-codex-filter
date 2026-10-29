@@ -1,24 +1,109 @@
-name: Windows console build
-on:
+name: Native portable builds and gated release
+'on':
   workflow_dispatch:
   push:
-    branches: [dev]
+    branches: [dev, dev-2]
+    tags: ['v*']
 permissions:
   contents: read
 jobs:
-  windows:
-    runs-on: windows-latest
+  native:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            architecture: x64
+            target: windows-x64
+            extension: zip
+            executable: MagpieFilter.exe
+          - runner: ubuntu-22.04
+            architecture: x64
+            target: linux-x64
+            extension: tar.gz
+            executable: MagpieFilter
+          - runner: macos-15
+            architecture: arm64
+            target: macos-arm64
+            extension: tar.gz
+            executable: MagpieFilter
+          - runner: macos-15-intel
+            architecture: x64
+            target: macos-x64
+            extension: tar.gz
+            executable: MagpieFilter
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      TARGET: ${{ matrix.target }}
+      ARCHIVE_EXTENSION: ${{ matrix.extension }}
+      EXECUTABLE: ${{ matrix.executable }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24.12.0
+          architecture: ${{ matrix.architecture }}
           cache: npm
+      - name: Validate release tag before building
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node -e "require('./scripts/release.cjs').validateTag(process.env.RELEASE_TAG)"
       - run: npm ci --ignore-scripts
       - run: npm test
-      - run: npm run build
-      - run: npm run smoke:exe
-      - uses: actions/upload-artifact@v4
+      - name: Build the native executable
+        run: node scripts/build.cjs "$env:RUNNER_TEMP/native-build"
+      - name: Package the native archive
+        run: node scripts/package-release.cjs "$env:RUNNER_TEMP/native-build" "$env:RUNNER_TEMP/native-release"
+      - name: Extract the packaged executable
+        run: |
+          New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/native-extracted"
+          tar -xf "$env:RUNNER_TEMP/native-release/MagpieFilter-$env:TARGET.$env:ARCHIVE_EXTENSION" -C "$env:RUNNER_TEMP/native-extracted"
+      - name: Smoke the extracted standalone executable
+        run: node scripts/smoke-exe.cjs "$env:RUNNER_TEMP/native-extracted/MagpieFilter-$env:TARGET/$env:EXECUTABLE"
+      - name: Verify consent with an owned fixture process
+        run: node scripts/smoke-port-consent.cjs "$env:RUNNER_TEMP/native-extracted/MagpieFilter-$env:TARGET/$env:EXECUTABLE"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: MagpieFilter-windows-x64-dev
-          path: dist/*
+          name: MagpieFilter-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/native-release/MagpieFilter-${{ matrix.target }}.${{ matrix.extension }}
+            ${{ runner.temp }}/native-release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: false
+  publish:
+    needs: native
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: windows-2022
+    timeout-minutes: 15
+    concurrency:
+      group: native-release-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.12.0
+          architecture: x64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: MagpieFilter-*
+          path: ${{ runner.temp }}/release-download
+          merge-multiple: false
+      - name: Verify exact assets, upload draft, then publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/release.cjs "$env:RUNNER_TEMP/release-download" "$env:RUNNER_TEMP/publish-assets"
