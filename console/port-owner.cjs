@@ -157,19 +157,34 @@ function Listeners {
 function Ancestors {
   $seen = New-Object 'System.Collections.Generic.HashSet[int]'
   $next = $self
+  $childStart = [long]::MaxValue
+  $discontinuity = $false
   for ($i=0; $i -lt 128; $i++) {
     if ($next -le 0) { return ,@($seen) }
-    if (-not $seen.Add($next)) { throw 'INSPECTION' }
+    if (-not $seen.Add($next)) {
+      if ($discontinuity) { return ,@($seen) }
+      throw 'INSPECTION'
+    }
     if ($next -le 4) { return ,@($seen) }
     $h = [PortOwnerNative]::OpenProcess(0x1000, $false, [uint32]$next)
     if ($h -eq [IntPtr]::Zero) {
       $p = Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $next)
       if (-not $p) { return ,@($seen) }
-      $next = [int]$p.ParentProcessId
-      continue
+      $start = [long]$p.CreationDate.ToFileTimeUtc()
+      $parent = [int]$p.ParentProcessId
+    } else {
+      try {
+        $start = [long][PortOwnerNative]::Start($h)
+        $parent = [PortOwnerNative]::Parent($h)
+      } finally { [PortOwnerNative]::CloseHandle($h) | Out-Null }
     }
-    try { $next = [PortOwnerNative]::Parent($h) }
-    finally { [PortOwnerNative]::CloseHandle($h) | Out-Null }
+    # CIM creation dates have microsecond precision; never compare rounded floating-point ticks.
+    $start -= $start % 10
+    if ($start -le 0) { throw 'INSPECTION' }
+    # Clock changes alone prove nothing: visit the full chain and protect every reachable PID.
+    if ($start -gt $childStart) { $discontinuity = $true }
+    $childStart = $start
+    $next = $parent
   }
   throw 'INSPECTION'
 }

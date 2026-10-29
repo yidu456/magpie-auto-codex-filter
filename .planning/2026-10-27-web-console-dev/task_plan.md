@@ -4,7 +4,7 @@
 Preserve the completed dev console and adapt selected V11 capabilities on dev-2, with a verified commit per step.
 
 ## Next Step
-Phase14: repair57cb5d0 passed all four native suites/builds/extracted smokes/consent. Run40813226587 failed only macOSx64 CreateArtifact after five network timeouts. Record evidence and source-only docs push to retry hosted delivery; no application/workflow patch for a transient network error. Interrupted local full suite has no final result; rerun it. Preserve existing v0.1.0-dev/main and delivered binaries.
+Phase14: fixture-order and Windows full stale-ancestry fixes passed deterministic RED/GREEN and independent review. Targeted helper/controller/server28/28, ancestry14cases and native port+consent35pass1Unixskip. Fresh full suite437total435pass0fail2Unixskip and strict manifest3/3 passed. Corrected download-verification attribution; review docs, source-only commit/push and all four native CI gates next. Prior d025e6e four artifacts verified. Preserve v0.1.0-dev/main and delivered binaries; no release claim yet.
 
 ## Current Phase
 Phase 14

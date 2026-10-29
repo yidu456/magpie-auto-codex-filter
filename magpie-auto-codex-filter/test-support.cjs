@@ -31,12 +31,13 @@ function fixture(t) {
   const root = path.join(__dirname, '.runtime');
   fs.mkdirSync(root, {recursive: true});
   const directory = fs.mkdtempSync(path.join(root, 'test-'));
-  t.after(() => {
+  // Append removal after the awaited resource disposers registered in the test body.
+  t.after(() => t.after(() => {
     // Only remove the temporary directory this test created under the workspace.
     assert.equal(path.dirname(fs.realpathSync(directory)), fs.realpathSync(root));
     assert.match(path.basename(directory), /^test-/);
     fs.rmSync(directory, {recursive: true, force: true});
-  });
+  }));
   return directory;
 }
 const sample = {
