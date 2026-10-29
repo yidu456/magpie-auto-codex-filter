@@ -4,12 +4,12 @@
 
 ## 网页版快速开始
 
-1. 双击本次单独构建的 `dist/dev-2/MagpieFilter.exe`，默认浏览器自动打开本地控制台。EXE 内含 Node 和网页资源，不需要另装 Node，也没有 Electron/Chromium 外壳。
+1. 双击本次 Windows x64 候选产物 `dist/dev-3/MagpieFilter.exe`，默认浏览器自动打开本地控制台。EXE 内含 Node 和网页资源，不需要另装 Node，也没有 Electron/Chromium 外壳。
 2. 在“设置”页确认 Codex 配置文件、Magpie 本机 HTTP 地址和过滤端口，点击“保存接入设置”。本程序不会替你配置账号、模型或启动 Magpie。
 3. 选择清理模式及异常处理项，分别打开首页“网关接入”和“核心过滤”。**每次新进程仅启动网页，网关和核心均关闭**；旧配置的启用值只读保留，不自动接入。重复双击已有实例保留当前选择。
 4. 首次接入后，Codex 可能需要重开才能读取新地址。过滤端口默认 **18184**，可改为 1024–65535 范围内可用且不冲突的端口：先“关闭网关并中断请求”→修改并保存→重新开启接入→**重启 Codex**。核心、异常处理和保活开关切换不需要重启。
 
-本次产物只放在 **`dist/dev-2/MagpieFilter.exe`**，不覆盖 `dist/portable/MagpieFilter.exe` 或旧 `dist` 根目录产物。此次没有停止旧实例，也没有改写真实客户端配置。
+源码仍位于 literal **`dev-2`** 分支；当前 Windows 候选是 **`dist/dev-3/MagpieFilter.exe`**，SHA-256 为 `eb493cdd7004221ff25895a88e17aa1dca3474b5effd416cefa9e120b5575935`。正在使用的 `dist/dev-2/MagpieFilter.exe` 保持原字节，SHA-256 为 `4db96d472338365d1adb51da103c061198bfcb39c2a40b5d26d3cb701fd90157`。不要用源码目录名推断 EXE 版本，也不要覆盖正在运行的文件；此次验收没有接管真实客户端或停止用户进程。
 
 ## 四页导航
 
@@ -31,7 +31,7 @@
 
 “不写 C 盘”指本程序自己的数据。启用接入仍会修改你选定路径的 Codex 配置；默认浏览器和 Windows 自身的数据位置不由过滤器控制。旧 AppData 记录未迁移或删除。
 
-**已有旧过滤器时不要直接开启新控制台接管。** 请先等当前任务结束，在旧目录使用原停止脚本正常恢复地址；不要强杀旧进程、删除恢复文件或串联两个过滤器。新旧默认过滤端口都是 18184；端口冲突会拒绝启用。
+**已有旧过滤器时不要直接开启新控制台接管。** 请先等当前任务结束，在旧目录使用原停止脚本正常恢复地址；不要强杀旧进程、删除恢复文件或串联两个过滤器。新旧默认过滤端口都是 18184；新控制台只会在显式开启网关并实际遇到端口占用时显示一次确认，不会在启动或核心切换时自动终止进程。
 
 源码方式启动：`node console/main.cjs` 或 `npm start`，需要 Node.js 24.12+，运行不需要 npm 依赖。`--runtime ABSOLUTE_PATH` 指定独立运行目录；`--no-open` 仅关闭自动打开浏览器，适合测试。不要把 console runtime 指到旧 `.runtime`。
 
@@ -44,7 +44,13 @@
 | 开启 | 关闭 | 字节直通，不清理、不重试、不截获 SSE |
 | 开启 | 开启 | 依据当前策略处理新请求；已有请求保持捕获策略 |
 
-显式 `POST /api/connect` 仅接受 `{revision}`，使用已保存的接入设置；普通 `POST /api/settings` 不隐式启动网关。端口确认仅属于网关开启。`POST /api/disconnect` 安全恢复后强制取消，普通退出仍保留活动请求保护。以上为当前源码行为；旧 EXE 不会随源码自动更新，最终原生重建另行验证。
+显式 `POST /api/connect` 仅接受 `{revision}`，使用已保存的接入设置；普通 `POST /api/settings` 不隐式启动网关。端口确认仅属于网关开启。`POST /api/disconnect` 安全恢复后强制取消，普通退出仍保留活动请求保护。当前 `dist/dev-3` Windows 候选已由同一源码重建并做隔离验收；`dist/dev-2` 旧 EXE 不会随源码自动更新。
+
+### 端口冲突与进程确认
+
+- 冲突框显示能安全取得的程序名、PID 和可执行路径；只能选择“否”或对这一次冲突选择“是”。默认焦点是“否”，取消、超时、设置变化或身份变化都会使确认失效。浏览器提交不了自选 PID，程序也不提供通用结束进程接口。
+- 只允许终止当前用户、身份完整且复核一致的单个监听进程。自身、父进程/祖先进程、系统/root/关键进程、多重或无法识别的占用者、权限不足及检查超时一律拒绝；不提权、不结束进程树。macOS 因系统元数据不足仅显示冲突，必须手工退出占用程序后重试。
+- 强制结束其他程序可能丢失它尚未保存的数据，且无法由 Magpie Filter 恢复。只确认自己明确认识且已保存工作的进程；身份或端口占用发生变化时必须重新确认。
 
 ## 模式和开关
 
@@ -95,7 +101,7 @@
 
 - 关闭网页不会停止服务；再次双击同一运行目录的 EXE 会重新打开已有实例。
 - “核心关闭”保持已接入地址，便于无需重启客户端直接切换直通。它不会恢复配置。
-- “关闭网关并中断请求”经确认后先还原本程序精确改写且未被用户更改的地址，再关闭自己的网关连接，取消上传、暂存、流式、退避及直通请求；保留网页和核心选择。更换端口、上游、配置路径前先关闭网关。
+- “关闭网关并中断请求”经确认后先还原本程序精确改写且未被用户更改的地址，再关闭自己的网关连接，取消上传、暂存、流式、退避及直通请求；保留网页和核心选择。未交付的数据不会重放，且不能撤销上游已经执行的工具操作或计费。更换端口、上游、配置路径前先关闭网关。
 - “退出程序并恢复配置”恢复地址并结束服务。仍有请求（包括上传、退避、直通请求）时会拒绝退出，请先关闭网关强制中断、等待结束或从客户端取消。
 - 若恢复失败或用户编辑后的地址仍指向该过滤端口，不关闭可用代理、不猜原地址；界面提示处理。异常终止后重新启动同一 runtime 会先检查恢复记录。
 - 默认状态目录为 EXE 同目录的 `.magpie-filter`。其中 `service.json` 仅在生效管理鉴权开启时缓存当前令牌，`connection.json` / `routes.json` 用于恢复；不要公开、跨机器复制或删除尚需恢复的记录。
@@ -109,36 +115,55 @@
 
 1. 等真实任务完成，在旧控制台正常“断开并恢复”并退出（CMD 服务用原停止脚本）。不要强杀、删除恢复记录或让两个实例接管同一客户端配置。
 2. 保留回滚对：**旧 EXE + 与它配套的 `MagpieFilter.config.json`**，先离线备份配置，不复制令牌/恢复文件给别人。本地保留旧 portable EXE；此次 SHA-256 为 `06b5151c3239746748c7b70d2538cbe37e6c0418bba3ade2c11729b3d511da5d`。
-3. 在新独立目录放 dev-2 EXE 和两份许可。需要沿用旧配置时，仅在旧程序退出恢复后复制旧 `version:1` 配置到新 EXE 同目录；先离线设 `settings.policy.enabled=false`，检查客户端路径、上游和端口，再启动并在设置页人工启用。不要迁移 `service.json`、锁或未完成的恢复文件；更换目录不能迁移进程。
+3. 在新独立可写目录放 `dist/dev-3` 候选 EXE 和两份许可。需要沿用旧配置时，仅在旧程序退出恢复后复制旧 `version:1` 配置到新 EXE 同目录；先离线设 `settings.policy.enabled=false`，检查客户端路径、上游和端口，再启动并在设置页人工启用。不要迁移 `service.json`、锁或未完成的恢复文件；更换目录不能迁移进程。
 4. 回滚时先等新版任务完成、正常恢复并退出，再启动旧 EXE/配套旧配置。若恢复失败，保留新版整个运行目录诊断，先修复恢复，不要启动旧版抢接管。旧 EXE 不一定识别新版新增字段，不能直接拿已保存的新配置替代回滚配置。
 
-## 构建与验证
+## 原生便携包
 
-Windows x64，Node 24.12+：
+| 系统 | 包名 | 启动 |
+| --- | --- | --- |
+| Windows x64 | `MagpieFilter-windows-x64.zip` | 解压后双击 `MagpieFilter.exe`，或 PowerShell 运行 `& .\MagpieFilter.exe` |
+| Linux x64 | `MagpieFilter-linux-x64.tar.gz` | 解压后运行 `./start.sh` |
+| macOS arm64 | `MagpieFilter-macos-arm64.tar.gz` | 解压后运行 `./start.sh` 或双击 `Start-MagpieFilter.command` |
+| macOS x64 | `MagpieFilter-macos-x64.tar.gz` | 同上 |
+
+必须把**整个包**解压到新的可写目录后启动，不能在压缩包内运行。配置 `MagpieFilter.config.json` 和状态 `.magpie-filter` 始终写在可执行文件旁，与当前工作目录无关；不要从只读下载位置运行，也不要分享配置、令牌、日志或恢复状态。每个包只有一个同名顶层目录，含可执行文件、项目/Node 许可、`START-HERE.txt` 和内部 `SHA256SUMS.txt`；Unix 含 `start.sh`，macOS 另含 `.command` 启动器。无安装器、服务、自启动或 shell 配置修改。
+
+Linux 包面向 x64 **glibc** 发行版（例如 Ubuntu 22.04+），不支持 Alpine/musl。macOS 构建仅 ad-hoc 签名，不是 Apple 公证或可验证发布者签名，首次运行可能需要在系统设置中手工批准；macOS 端口占用者也必须手工退出。Windows EXE 没有发布者证书，SmartScreen 可能提示；GUI 子系统不保留终端窗口。
+
+Windows 文件详情和受控进程已验证为 `Magpie Filter` / `MagpieFilter.exe`，版本 `0.1.0.0`，设置页显示实际应用名、原始 PID 与可执行路径。它不冒充签名发布者；任务管理器的可视分组因 Windows 版本而异，应以“详细信息”中的映像名、PID 和路径为准。源码用 Node 启动时会诚实显示 Node 可执行路径。
+
+## 本地构建与验收
+
+只能在目标原生系统/架构上构建，不是交叉编译。需要 Node.js 24.12.0、锁文件中的 `esbuild`/`postject`、联网取得对应 Node LICENSE，以及系统自带的归档/签名工具。下例每次创建全新目录，不写 `dist/dev-2` 或 `dist/dev-3`：
 
 ```powershell
 npm ci --ignore-scripts
 npm test
-node -e "require('./scripts/build.cjs').build({outputDirectory:'dist/dev-2'}).catch(e=>{console.error(e);process.exitCode=1})"
-node scripts/smoke-exe.cjs dist/dev-2/MagpieFilter.exe
+$root = Join-Path $env:TEMP ("magpie-native-" + [guid]::NewGuid())
+node scripts/build.cjs "$root/build"
+node scripts/package-release.cjs "$root/build" "$root/release"
+New-Item -ItemType Directory "$root/extracted" | Out-Null
+tar -xf "$root/release/MagpieFilter-windows-x64.zip" -C "$root/extracted"
+node scripts/smoke-exe.cjs "$root/extracted/MagpieFilter-windows-x64/MagpieFilter.exe"
+node scripts/smoke-port-consent.cjs "$root/extracted/MagpieFilter-windows-x64/MagpieFilter.exe"
 ```
 
-先确认目标 EXE 不存在或是自己可替换的未运行产物；构建会写指定目录，切勿覆盖旧产物。默认 `npm run build` / `npm run smoke:exe` 仍指向 `dist` 根目录，保留旧版时请使用上述显式命令。构建依赖仅 `esbuild` 和 `postject`，版本锁定在 lockfile；运行无第三方依赖。构建需联网获取匹配版本的 Node LICENSE。`dist/dev-2` 包含 EXE、两份许可和 EXE 校验值；EXE 约 86 MiB（磁盘体积，不是内存占用）。运行后生成外部设置/日志/恢复文件是正常行为。
+Linux/macOS 使用同样的安装、测试、构建和打包步骤，以 `root="$(mktemp -d)"` 创建目录，再用 `tar -xzf` 解压相应 `.tar.gz`，把两个 smoke 命令的可执行路径换成 `"$root/extracted/MagpieFilter-<target>/MagpieFilter"`。原生 smoke 只操作自己创建并跟踪的回环 fixture；Windows/Linux 非 root 会测试一次明确确认的单进程终止，macOS（以及 root Linux）只验证显示/拒绝，手工退出 fixture 后重试。不要对用户进程或真实客户端目录运行破坏性验收。
 
-当前是**未签名 dev EXE**，Windows/SmartScreen 可能提示。GUI 子系统构建不保留命令行窗口。构建时 postject 的原 Node 签名警告不代表产物带有效签名；产物验证为 NotSigned。发布前如需受信任签名，要使用自己的代码签名证书。
+根 `SHA256SUMS.txt` 校验可分发源码，`node --test scripts/source-manifest.test.cjs` 验证清单覆盖及字节；每个构建目录和归档有自己的清单，含义不同。不要分享 `.runtime`、`.verification`、`.planning`、`.superpowers`、`.playwright-mcp`、`.magpie-filter` 或 `%LOCALAPPDATA%` 中的状态。可选浏览器验收使用外部已安装的 Playwright/Chrome，例如 `node scripts/run-browser-smoke.cjs <新解压的可执行文件>`；所有工装都应指向新解压目录和模拟配置，不调用收费服务。
 
-`.github/workflows/windows-build.yml` 可手动或推送 dev 后在 Windows runner 构建并上传 artifact，不自动发布 Release。此次仅完成本机构建，未推送、未运行远程工作流。
+## CI 产物与版本发布
 
-根 `SHA256SUMS.txt` 校验可分发源码；`dist/dev-2/SHA256SUMS.txt` 单独校验 EXE。源码校验覆盖源码/测试/脚本/许可，不包括本地规划和运行状态；`node --test scripts/source-manifest.test.cjs` 验证覆盖和当前文件字节。不要分享 `.runtime`、`.verification`、`.planning`、`.superpowers`、`.playwright-mcp` 或 `%LOCALAPPDATA%` 中的运行状态。
+`.github/workflows/windows-build.yml` 在推送 `dev` / `dev-2` 或手工 `workflow_dispatch` 时只构建和上传本次运行的四个平台 artifact，**不会创建 Release**。推送已有且格式合法的 `vMAJOR.MINOR.PATCH[-prerelease]` tag 才会在四个原生 job 全部通过后进入发布；没有 pull request 发布入口。此次没有 push/tag/dispatch，macOS/Linux 原生构建、原生 smoke 和远程发布均尚未执行，不能据此声称这些平台已经验证。
 
-可选的四页浏览器验收（已有 Playwright 与 Chrome，不安装/下载浏览器）：
+Release 精确包含八个资产：四个上述原生归档、`MagpieFilter.exe`、`LICENSE.txt`、`NODE-LICENSE.txt`、聚合 `SHA256SUMS.txt`。其中聚合清单精确校验前七项；工作流不会上传整个 `dist`、配置或运行状态。分支/手工运行下载 artifact 时，各目标仅含自己的归档和外部 `SHA256SUMS.txt`，它不是 GitHub Release。
 
-```powershell
-$env:PLAYWRIGHT_MODULE='你的已安装 playwright 模块绝对路径'
-node scripts/run-browser-smoke.cjs dist/dev-2/MagpieFilter.exe
-```
+全局权限只有 `contents:read`；仅 tag 的 publish job 获得 `contents:write`，且只在发布 helper 步骤把 GitHub 自动提供的短期 `GITHUB_TOKEN` 作为 `GH_TOKEN` 使用。无需也不应提供 PAT、用户 secret、签名凭据或修改仓库设置。发布器先校验现有 tag、四个 artifact 的精确外部清单/哈希，并检查 Windows 包的精确内容及内部清单，再创建 draft、上传并复核八个资产，最后发布；其余三个包由各自原生 job 打包、解压并运行 smoke。上传失败保留 draft，重新运行只允许续传匹配的 draft。已有已发布 Release 会明确拒绝，绝不覆盖；上传/发布本身不是原子操作。
 
-不传 EXE 参数则测试源码。Runner 使用已安装 Chrome、独立 headless 上下文和工作区内模拟配置/上游，成功或失败都清理它自己拥有的子进程，不枚举或停止用户进程；可用 `BROWSER_CHANNEL` 选择已有兼容浏览器。桌面与 390px 四页截图在 `.verification/task-5-browser`，不分发。独立 CLI 工装 `node scripts/serve-ui-fixture.cjs [EXE路径]` 仍可用；`scripts/browser-smoke.js` 拒绝修改非工装配置。EXE smoke 覆盖旧配置只读、受保护首输出/前段恢复/晚期不重放、透明绕过/精确地址恢复、重启仅聚合恢复、令牌/端口待重启、单实例、复制到其他目录并在无 Node PATH/不同 cwd 下读取相邻配置。所有测试仅本地模拟，不调用收费服务。
+在不发布的前提下，可从 Actions 手工运行 workflow，下载四个 artifact 并逐个核对/解压/运行 smoke；不要手工调用 `scripts/release.cjs`。首次真正 tag 发布前，应先让四个原生 runner 的 artifact-only 运行全部通过并人工检查包内 `START-HERE.txt`、权限和清单。
+
+完整 Phase 13 本地证据、产物哈希和未验证边界见 `docs/verification-phase13.md`。
 
 ## 原独立版 CMD/CLI 说明
 
