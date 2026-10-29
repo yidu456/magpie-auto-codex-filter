@@ -119,7 +119,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 $watch = [Diagnostics.Stopwatch]::StartNew()
-Add-Type -TypeDefinition @'
+$nativeSource = @'
 using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
@@ -147,7 +147,7 @@ public static class PortOwnerNative {
     return checked((int)info.Parent.ToInt64());
   }
 }
-'@ | Out-Null
+'@
 function Listeners {
   @(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue -ErrorVariable netErrors |
     Where-Object { $_.LocalAddress -in @('0.0.0.0', '::', '127.0.0.1', '::ffff:127.0.0.1') } |
@@ -191,6 +191,8 @@ function Protected($owner, $ancestors) {
 try {
   $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
   $ids = @(Listeners)
+  # A free port needs no process handles; avoid compiler startup during bounded release polling.
+  if ($ids.Count) { Add-Type -TypeDefinition $nativeSource | Out-Null }
   $ancestors = if ($ids.Count) { Ancestors } else { @($self) }
   if ($mode -eq 'inspect') {
     $owners = @()

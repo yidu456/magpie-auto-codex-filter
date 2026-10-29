@@ -426,6 +426,28 @@ test('native Windows terminates only a tracked disposable listener while an unre
   const {promisify} = require('node:util');
   const {once} = require('node:events');
   const execute = promisify(execFile);
+  const diagnostics = [];
+  const redacted = output => String(output || '').replace(/\bS-\d-(?:\d+-)*\d+\b/g, 'redacted').slice(0, 4096);
+  const traced = async (file, args, options) => {
+    const started = performance.now();
+    const script = Buffer.from(args.at(-1), 'base64').toString('utf16le')
+      .replace('  $status = switch ([string]$_.Exception.Message)',
+        '  [Console]::Error.WriteLine($_.Exception.GetType().FullName + ": " + $_.Exception.Message)\n  $status = switch ([string]$_.Exception.Message)');
+    try {
+      const result = await execute(file, [...args.slice(0, -1), Buffer.from(script, 'utf16le').toString('base64')], options);
+      if (diagnostics.length < 16) diagnostics.push({ms: Math.round(performance.now() - started), timeout: options.timeout,
+        stdout: redacted(result.stdout), stderr: redacted(result.stderr)});
+      return result;
+    } catch (error) {
+      if (diagnostics.length < 16) diagnostics.push({ms: Math.round(performance.now() - started), timeout: options.timeout,
+        code: error.code, stdout: redacted(error.stdout), stderr: redacted(error.stderr)});
+      throw error;
+    }
+  };
+  const diagnostic = conflict => {
+    t.diagnostic('Tracked Windows owner failure: ' + JSON.stringify(conflict));
+    for (const record of diagnostics) t.diagnostic(JSON.stringify(record));
+  };
   const children = [];
   t.after(async () => {
     for (const child of children) {
@@ -449,10 +471,12 @@ test('native Windows terminates only a tracked disposable listener while an unre
   const unicodeAdapter = createPortOwner({runCommand: async (file, args, options) => {
     const script = Buffer.from(args.at(-1), 'base64').toString('utf16le')
       .replace('$owners += (Owner $id $h)', "$metadata = Owner $id $h; $metadata.name = '" + unicodeName + "'; $owners += $metadata");
-    const {stdout} = await execute(file, [...args.slice(0, -1), Buffer.from(script, 'utf16le').toString('base64')], options);
+    const {stdout} = await traced(file, [...args.slice(0, -1), Buffer.from(script, 'utf16le').toString('base64')], options);
     return stdout;
   }});
-  assert.equal((await unicodeAdapter.inspect(target.port)).owner?.name, unicodeName);
+  const unicodeConflict = await unicodeAdapter.inspect(target.port);
+  if (unicodeConflict.owner?.name !== unicodeName) diagnostic(unicodeConflict);
+  assert.equal(unicodeConflict.owner?.name, unicodeName);
   let changed = false;
   const kills = [];
   const adapter = createPortOwner({runCommand: async (file, args, options) => {
@@ -463,13 +487,14 @@ test('native Windows terminates only a tracked disposable listener while an unre
       assert.equal(expected.pid, target.child.pid, 'The test may only terminate its own tracked child');
       kills.push(expected.pid);
     }
-    const {stdout} = await execute(file, args, options);
+    const {stdout} = await traced(file, args, options);
     if (!changed || script.includes('$expected =')) return stdout;
     const snapshot = JSON.parse(stdout);
     for (const owner of snapshot.owners || []) owner.started = String(BigInt(owner.started) + 1n);
     return JSON.stringify(snapshot);
   }});
   const first = await adapter.inspect(target.port);
+  if (first.owner?.pid !== target.child.pid) diagnostic(first);
   assert.equal(first.owner?.pid, target.child.pid);
   assert.equal(first.canTerminate, true, first.reason);
   changed = true;
@@ -479,11 +504,30 @@ test('native Windows terminates only a tracked disposable listener while an unre
   changed = false;
   const confirmed = await adapter.inspect(target.port);
   const exited = once(target.child, 'exit');
-  assert.deepEqual(await adapter.terminate(target.port, confirmed.owner), {port: target.port, released: true});
+  let released;
+  try { released = await adapter.terminate(target.port, confirmed.owner); }
+  catch (error) { diagnostic({code: error.code}); throw error; }
+  assert.deepEqual(released, {port: target.port, released: true});
   await exited;
   assert.deepEqual(kills, [target.child.pid]);
   assert.equal(unrelated.child.exitCode, null);
   assert.equal((await adapter.inspect(unrelated.port)).owner?.pid, unrelated.child.pid);
+});
+
+test('native Windows empty port does not require compiling the process identity helper', {skip: process.platform !== 'win32', timeout: 30000}, async t => {
+  const net = require('node:net'), execute = require('node:util').promisify(require('node:child_process').execFile);
+  const server = net.createServer(); t.after(() => new Promise(resolve => server.close(resolve)));
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  const adapter = createPortOwner({runCommand: async (file, args, options) => {
+    const script = Buffer.from(args.at(-1), 'base64').toString('utf16le')
+      .replace('public static class PortOwnerNative', 'invalid native helper source');
+    const {stdout} = await execute(file, [...args.slice(0, -1), Buffer.from(script, 'utf16le').toString('base64')], options);
+    return stdout;
+  }});
+  assert.equal((await adapter.inspect(port)).reason, 'PORT_INSPECTION_FAILED', 'An occupied port must still require complete identity inspection');
+  await new Promise(resolve => server.close(resolve));
+  assert.deepEqual(await adapter.inspect(port), {port, owner: null, canTerminate: false, reason: null});
 });
 
 test('native Unix inspects a tracked listener, Linux revalidates before one kill and macOS stays display-only',
