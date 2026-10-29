@@ -4,7 +4,7 @@
 Preserve the completed dev console and adapt selected V11 capabilities on dev-2, with a verified commit per step.
 
 ## Next Step
-Phase14: fixture-order and Windows full stale-ancestry fixes passed deterministic RED/GREEN and independent review. Targeted helper/controller/server28/28, ancestry14cases and native port+consent35pass1Unixskip. Fresh full suite437total435pass0fail2Unixskip and strict manifest3/3 passed. Corrected download-verification attribution; review docs, source-only commit/push and all four native CI gates next. Prior d025e6e four artifacts verified. Preserve v0.1.0-dev/main and delivered binaries; no release claim yet.
+Phase14 repairs complete: a31156b local437total435pass0fail2skip and native40817990959 all four full suite/build/archive/extracted smoke/consent/upload jobs pass. Four downloaded archives pass strict external verification. Final evidence documented and independently approved; preserve main/v0.1.0-dev and delivered EXEs. New version tag/Release remains a separate authorized delivery step, not yet executed.
 
 ## Current Phase
 Phase 14
@@ -77,8 +77,10 @@ Phase 14
 - Completed on2026-10-29: all eight tasks and independent final review approved; exact Windows candidate/archive hashes and limits in docs/verification-phase13.md. No user process/configuration or delivered binary was changed during final workflow/docs work.
 
 ### Phase 14: Hosted CI compatibility fixes
-**Status:** in_progress
+**Status:** complete
 - User authorized source push to yidu456, followed by fixing the failed hosted run. Branch dev-2 and v0.1.0-dev now exist at e6a1230; main unchanged. No Release exists.
 - Diagnose all four native jobs from retained logs. Windows mismatch reproduced exactly by LF-to-CRLF conversion; Unix inspection/termination and browser shutdown assertions need focused regression coverage.
 - Keep strict checksums and pre-termination safety gates, macOS display-only behavior, bounded waiting and complete native tests. Do not skip failures, elevate privileges or alter user processes/configurations.
 - Fix and verify scoped code/tests/manifest, independent review, then source-only branch CI validation. Preserve v0.1.0-dev and delivered dev2/dev3 binaries; no local rebuild or new release until native CI passes.
+
+- Phase14 final acceptance at a31156b: local435pass2skip; Windows hosted435pass2skip, Linux/macOS each432pass5skip, all0fail/437total. Native40817990959 complete success including four uploads; downloaded archives verified. Scoped independent reviews and final evidence-only review approved.

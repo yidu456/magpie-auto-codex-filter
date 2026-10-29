@@ -2,7 +2,7 @@
 
 ## Scope
 
-Verified application repair: `57cb5d0` on dev-2, Node v24.12.0. Windows source-byte compatibility and Linux post-kill observation were repaired in ec98ba7; macOS basename metadata in 1d84b71; Windows empty-port compiler dependency in 57cb5d0. All changes received independent review and targeted RED/GREEN regression verification.
+Earlier verified application repair: `57cb5d0` on dev-2, Node v24.12.0. Windows source-byte compatibility and Linux post-kill observation were repaired in ec98ba7; macOS basename metadata in 1d84b71; Windows empty-port compiler dependency in 57cb5d0. All changes received independent review and targeted RED/GREEN regression verification.
 
 - Source checksums remain strict actual-byte hashes. Git materialization is tested with core.autocrlf=true and false, preserving intentional CRLF Windows launchers.
 - Linux retries only uncertain observations after the single confirmed kill, within the existing five-second deadline. A fresh successful empty snapshot is still required; replacement owners require new consent.
@@ -37,7 +37,20 @@ The resumed local suite at d025e6e finished with 434 total, 428 passed, 4 failed
 - Fixture deletion ran before asynchronous controller/server disposers, racing final metrics/log writes. A regression first failed deterministically, then passed after deletion was appended behind awaited body-registered disposers. Existing realpath containment and temporary-basename checks remain. Helper, controller and management tests pass 28/28.
 - An owned native probe localized INSPECTION to an ancestor cycle. A recycled creator PID formed a stale cyclic chain. The helper now reads creation/parent metadata from one held native handle or CIM record, records all reachable PIDs, and accepts the complete protected set only for a cycle accompanied by a timestamp discontinuity. A newer timestamp alone never truncates the walk; clock rollback still protects the reachable grandparent. Unqualified cycles, missing/invalid creation metadata and depth exhaustion fail closed. Microsecond normalization uses exact integer remainder only for ancestry; full-resolution termination identity is unchanged.
 - The actual-helper regression covers 14 native/CIM, stale-cycle, rollback, precision, missing-metadata, depth and handle-closure scenarios. Targeted native port and production consent suites pass 35/36 with one explicit Unix platform skip. Both repairs received independent review without actionable findings.
-- The fresh local full suite passes: 437 total, 435 passed, 0 failed, 2 native Unix skips, 147475 ms. A new four-platform source CI run is still required for these follow-up changes. The ancestry walk does not reconstruct historical grandparents beyond an exited/reused-process gap.
+- The fresh local full suite passes: 437 total, 435 passed, 0 failed, 2 native Unix skips, 147475 ms. The four-platform follow-up CI also passes, as recorded next. The ancestry walk does not reconstruct historical grandparents beyond an exited/reused-process gap.
+
+## Follow-up hosted acceptance
+
+[Actions run 40817990959](https://github.com/yidu456/magpie-auto-codex-filter/actions/runs/40817990959) at a31156b succeeds for all four native jobs. Each target passes the full suite, SEA build, archive packaging/extraction, standalone smoke, owned-process consent smoke and artifact upload.
+
+| Target | Total | Passed | Failed | Native platform skips |
+| --- | ---: | ---: | ---: | ---: |
+| Windows x64 | 437 | 435 | 0 | 2 |
+| Linux x64 | 437 | 432 | 0 | 5 |
+| macOS arm64 | 437 | 432 | 0 | 5 |
+| macOS x64 | 437 | 432 | 0 | 5 |
+
+The added ancestry regression is Windows-only, accounting for the additional Unix skip. All four nonexpired artifacts were downloaded and passed verifyArtifacts directory/name/regular-file/external-checksum validation. Internal Windows payload checks remain the separate publication preparation gate. Publish is correctly skipped for this source-only branch push; no version tag or Release was created.
 
 ## Delivery boundaries
 
