@@ -4,10 +4,10 @@
 Preserve the completed dev console and adapt selected V11 capabilities on dev-2, with a verified commit per step.
 
 ## Next Step
-Phase16 complete: combined smooth curves, pointer-near tooltip with retained bottom detail, horizontal distributions and240px precision tables verified. Every item committed locally after review. Full445total443pass0fail2skip; complete browser/pageErrors[] and16focused gates pass. Phase15 Release, refs and local EXEs preserved. No push or rebuild; await next user request.
+Phase16 complete: combined smooth curves, pointer-near tooltip with retained bottom detail, horizontal distributions and240px precision tables verified. Every item committed locally after review. Full445total443pass0fail2skip; complete browser/pageErrors[] and16focused gates pass. Phase15 Release, refs and local EXEs preserved. Phase17 complete: local Windowsx64 candidate dist/dev-4/MagpieFilter.exe built from1fbc046, standalone/full packaged browser/owned consent acceptance passes. Old EXEs/refs preserved; unsigned local candidate only, no push or Release change. Await user testing.
 
 ## Current Phase
-Phase 16
+Phase 17
 
 ## Phases
 
@@ -102,3 +102,11 @@ Phase 16
 - Baseline clean dev-2 at50b0bf4; focused assets and manifest8/8 pass. Reference repository and previous preview remain read-only inputs.
 
 - Phase16 final acceptance: Task1ca2ec02,Task22e120c0,Task39447b8e; final full suite445total443pass0fail2skip147710ms at stable document/source bytes. Complete isolated Chrome acceptance all chart flags true/pageErrors[],4widths/native touch/240px/sticky pass; scoped reviews approved. Local-only final acceptance commit; no new Release or binary rebuild.
+
+### Phase 17: Local chart EXE candidate
+**Status:** complete
+- Build the approved1fbc046 source with existing native build.cjs into freshdist/dev-4; no version change or oldEXE overwrite.
+- Validate standalone lifecycle and packaged browser in owned fixtures; compare embedded assets and preserved oldhashes.
+- Record output/hash/limits, then hand off the local candidate; no push/tag/Release change.
+
+- Phase17 acceptance:90313216bytes SHA256ea55beed8ab20ac3a2fe493c42a8c12f5ba2cc958f26e29672c11d106514a12c; Node24.12.0 package0.1.0-dev.1 native0.1.0.0 NotSigned. Build/identity/manifest11focusedpass; standalone lifecycle/assets/portable/restoration and full packaged browser chartflags/pageErrors[] pass. Owned consent cancellation/termination/restoration pass; independent build-record review approved. No real-provider calls or userprocess actions.
