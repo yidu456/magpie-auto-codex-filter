@@ -61,3 +61,13 @@ test('direct settings, records and help pages share only the whitelisted console
   }
   assert.equal((await call(origin, '/api/state', {method: 'GET'})).status, 403);
 });
+
+test('dashboard precise tables use expandable fixed240px scroll regions without hiding chart detail', () => {
+ const assets=require('./assets.cjs').loadAssets(),html=assets['/'].body.toString(),css=assets['/app.css'].body.toString();
+ const dashboard=html.split('id="page-dashboard"')[1].split('id="page-settings"')[0];
+ assert.equal((dashboard.match(/<details class="precision-data">/g)||[]).length,8);
+ assert.match(css,/\.precision-table\{height:240px;max-height:240px;overflow:auto/);
+ for(const id of ['request-series-rows','token-series-rows','ttfb-rows','duration-rows','error-kind-rows','error-code-rows','recovery-kind-rows','model-rows'])
+  assert.match(dashboard,new RegExp('<details class="precision-data">[^]*?id="'+id+'"[^]*?</details>'));
+ assert.match(dashboard,/id="error-kind-chart"/);
+});

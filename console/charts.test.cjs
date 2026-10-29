@@ -6,8 +6,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 function helpers() {
   const source = fs.readFileSync(path.join(__dirname, 'ui/app.js'), 'utf8');
-  return vm.runInNewContext(source.slice(source.indexOf('const finite ='), source.indexOf('function records('))
-    + '\n({chartSegments, smoothPath, chartMinute, minuteDetails, tooltipPosition})');
+  return vm.runInNewContext(source.slice(source.indexOf('const kinds ='), source.indexOf('function records('))
+    + '\n({chartSegments, smoothPath, chartMinute, minuteDetails, tooltipPosition, histogramRows, rankedErrors})');
 }
 test('trend segments retain zero and break at missing values/minutes or out-of-order times', () => {
   const {chartSegments} = helpers();
@@ -64,4 +64,18 @@ test('tooltip flips and clamps at all chart edges', () => {
   assert(p.left>=8 && p.left+180<=312);assert(p.top>=8 && p.top+140<=352);
  }
  const p=tooltipPosition(300,340,320,360,180,140);assert(p.left<300 && p.top<340);
+});
+
+test('distribution keeps all eight real bins with exact counts and shares, rejecting inconsistent samples', () => {
+ const {histogramRows}=helpers(),hist={boundsMs:[100,500,1000,3000,10000,30000,60000],counts:[1,0,1,0,0,0,0,0],count:2,sumMs:1000};
+ const rows=histogramRows(hist);assert.equal(rows.length,8);assert.equal(rows[0].count,1);assert.equal(rows[0].share,50);assert.equal(rows[1].share,0);
+ assert.match(rows[7].label,/> 60,000 ms/);assert.equal(rows.reduce((a,b)=>a+b.count,0),hist.count);
+ for(const invalid of [null,{...hist,count:3},{...hist,sumMs:-1},{...hist,counts:[.5,0,1.5,0,0,0,0,0]},{...hist,boundsMs:[100,100,1000,3000,10000,30000,60000]}])assert.equal(histogramRows(invalid).length,0);
+});
+test('error ranking sorts measured occurrences and bounds untrusted labels', () => {
+ const {rankedErrors}=helpers(),malicious='<img src=x onerror=alert(1)>';
+ const rows=rankedErrors({[malicious]:2,rateLimit:1,transport:5,negative:-1,unknown:null});
+ assert.deepEqual(Array.from(rows,r=>r.count),[5,2,1]);assert.equal(rows[1].label,malicious);assert.equal(rows[0].share,62.5);
+ assert.equal(rankedErrors(null).length,0);assert.equal(rankedErrors({zero:0}).length,0);
+ assert(rankedErrors({['x'.repeat(1000)]:1})[0].label.length<=80);
 });

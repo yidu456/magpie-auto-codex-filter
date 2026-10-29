@@ -189,6 +189,8 @@ function trend(id, series, fields) {
     };
     container.addEventListener('pointermove', pointer); container.addEventListener('pointerdown', pointer);
     container.addEventListener('pointerleave', hide); container.addEventListener('blur', hide);
+    // Replaced SVG hit targets can lose native leave events after a redraw.
+    document.addEventListener('pointermove', event => { if (view.inspect && !container.contains(event.target)) hide(); });
     container.addEventListener('keydown', event => {
       if (event.key === 'Escape') { hide(); return; }
       if (!['ArrowLeft', 'ArrowRight'].includes(event.key) || !view.series.length || !view.svg) return;
@@ -253,28 +255,43 @@ function drawTrend(id, view) {
   svg.append(guide, overlay); $(id).append(tooltip, detail);
   Object.assign(view, {svg, detail, guide, tooltip, x, y, left, right, top, bottom}); inspectTrend(id, view);
 }
-function histogram(id, histogram) {
-  const valid = histogram && finite(histogram.count) && histogram.count > 0 && finite(histogram.sumMs)
+function histogramRows(histogram) {
+  const valid = histogram && finite(histogram.count) && Number.isInteger(histogram.count) && histogram.count > 0 && finite(histogram.sumMs)
     && Array.isArray(histogram.boundsMs) && histogram.boundsMs.length === 7 && histogram.boundsMs.every((v, i, a) => finite(v) && (!i || v > a[i - 1]))
-    && Array.isArray(histogram.counts) && histogram.counts.length === 8 && histogram.counts.every(finite);
-  if (!valid) {
-    emptyChart(id + '-chart', '暂无延迟样本。'); $(id + '-summary').textContent = '未观测到有效延迟；不推算均值或百分位。';
-    table(id + '-rows', [], 2, '暂无延迟样本。'); return;
-  }
+    && Array.isArray(histogram.counts) && histogram.counts.length === 8 && histogram.counts.every(value => finite(value) && Number.isInteger(value))
+    && histogram.counts.reduce((sum, value) => sum + value, 0) === histogram.count;
+  if (!valid) return [];
   const bounds = histogram.boundsMs;
-  const rows = histogram.counts.map((count, i) => [i === 0 ? '0–' + number(bounds[0]) + ' ms' : i === 7 ? '> ' + number(bounds[6]) + ' ms' : '> ' + number(bounds[i - 1]) + '–' + number(bounds[i]) + ' ms', number(count)]);
+  return histogram.counts.map((count, i) => ({label: i === 0 ? '0–' + number(bounds[0]) + ' ms' : i === 7 ? '> ' + number(bounds[6]) + ' ms' : '> ' + number(bounds[i - 1]) + '–' + number(bounds[i]) + ' ms', count, share: count / histogram.count * 100}));
+}
+function rankedErrors(values) {
+  const rows = values && typeof values === 'object' && !Array.isArray(values) ? Object.entries(values).slice(0, 101)
+    .filter(([, count]) => finite(count) && Number.isInteger(count) && count > 0)
+    .map(([key, count]) => ({label: Object.hasOwn(kinds, key) ? kinds[key] : key.slice(0, 80), count})) : [];
+  const total = rows.reduce((sum, row) => sum + row.count, 0);
+  return finite(total) && total > 0 ? rows.sort((a, b) => b.count - a.count).map(row => ({...row, share: row.count / total * 100})) : [];
+}
+function distribution(id, rows, color = 0) {
+  const container = $(id); container.replaceChildren();
+  const max = Math.max(1, ...rows.map(row => row.count));
+  for (const {label, count, share} of rows) {
+    const row = document.createElement('div'), title = document.createElement('span'), track = document.createElement('span'), fill = document.createElement('i'), value = document.createElement('b');
+    row.className = 'distribution-row'; title.className = 'distribution-label'; title.textContent = label; title.title = label;
+    track.className = 'distribution-track'; track.setAttribute('aria-hidden', 'true'); fill.className = 'distribution-fill color-' + color;
+    fill.style.width = count / max * 100 + '%'; track.append(fill);
+    value.className = 'distribution-value'; value.textContent = number(count) + ' / ' + number(share) + '%';
+    row.append(title, track, value); container.append(row);
+  }
+}
+function histogram(id, histogram) {
+  const rows = histogramRows(histogram);
+  if (!rows.length) {
+    emptyChart(id + '-chart', '暂无延迟样本。'); $(id + '-summary').textContent = '未观测到有效延迟；不推算均值或百分位。';
+    table(id + '-rows', [], 3, '暂无延迟样本。'); return;
+  }
   $(id + '-summary').textContent = '平均 ' + ms(histogram.sumMs / histogram.count) + '；' + number(histogram.count) + ' 个样本。区间右端包含边界，不提供推算百分位。';
-  table(id + '-rows', rows, 2);
-  const svg = chartShell(id + '-chart', (id === 'ttfb' ? '首次实际交付' : '总时长') + '分布；具体区间与样本数见下方表格');
-  const max = Math.max(1, ...histogram.counts);
-  svg.append(svgElement('path', {d: 'M36 22V148H548', class: 'chart-axis'}));
-  histogram.counts.forEach((count, i) => {
-    const height = count / max * 116, x = 48 + i * 62;
-    const bar = svgElement('rect', {x, y: 148 - height, width: 38, height, rx: 3, class: 'chart-bar color-' + (id === 'ttfb' ? 0 : 1)});
-    bar.append(svgElement('title', {}, rows[i].join('：'))); svg.append(bar);
-    svg.append(svgElement('text', {x: x + 19, y: 140 - height, 'text-anchor': 'middle', class: 'chart-label'}, number(count)));
-    svg.append(svgElement('text', {x: x + 19, y: 172, 'text-anchor': 'middle', class: 'chart-label'}, i === 7 ? '>60s' : '≤' + number(bounds[i] / 1000) + 's'));
-  });
+  table(id + '-rows', rows.map(row => [row.label, number(row.count), number(row.share) + '%']), 3);
+  distribution(id + '-chart', rows, id === 'ttfb' ? 0 : 1);
 }
 function records(id, items, active = false) {
   const phases = {upload: '接收上传', upstream: '等待上游', backoff: '退避等待', streaming: '正在交付', finished: '已结束'};
@@ -302,6 +319,9 @@ function renderMetrics(metrics, diagnostics) {
   for (const [id, key] of [['history-kept', 'kept'], ['history-removed', 'removed'], ['history-ids', 'removedItemIds'], ['history-cleanups', 'cleanups']]) $(id).textContent = number(totals?.[key]);
   dimensions('recovery-kind-rows', retry?.recoveredByKind, true);
   dimensions('error-kind-rows', metrics?.errorsByKind, true); dimensions('error-code-rows', metrics?.errorsByCode);
+  const errors = rankedErrors(metrics?.errorsByKind);
+  if (errors.length) distribution('error-kind-chart', errors, 1); else emptyChart('error-kind-chart', '暂无可用错误类别观测。');
+  $('error-kind-summary').textContent = errors.length ? '条长按次数比较；数值为错误发生次数 / 已展示类别占比，不是失败请求率。' : '错误数据不可用或尚无错误；不推算失败率。';
   dimensions('model-rows', metrics?.byModel, false, '暂无已结束的模型请求。');
   const series = []; let previous = -1;
   for (const bucket of Array.isArray(metrics?.series) ? metrics.series.slice(-180) : []) {

@@ -167,7 +167,22 @@ async (page, {screenshots = '.verification/task-4-browser', only} = {}) => {
     check(await page.locator('#daily-started').textContent() === '5', 'Daily metrics must not use proxy stats');
     check((await page.locator('#ttfb-summary').textContent()).includes('500 ms'), 'TTFB mean must derive from observed sum/count');
     check((await page.locator('#duration-summary').textContent()).includes('2,000 ms'), 'Duration mean incorrect');
-    check(await page.locator('#ttfb-chart svg rect').count() === 8, 'Native histogram must render all eight observed bins');
+    check(await page.locator('#ttfb-chart .distribution-row').count() === 8, 'Horizontal histogram must render all eight observed bins');
+    check((await page.locator('#ttfb-chart .distribution-value').first().textContent()) === '1 / 50%', 'Distribution needs exact count and sample share');
+    check(await page.locator('#ttfb-chart .distribution-fill').nth(1).evaluate(el => el.style.width === '0%'), 'Zero bins must stay zero');
+    check((await page.locator('#error-kind-chart .distribution-label').first().textContent()).includes('网络'), 'Error categories must rank by observed occurrence count');
+    const precise = page.locator('#page-dashboard .precision-data');
+    for (let i = 0; i < await precise.count(); i++) await precise.nth(i).locator('summary').click();
+    for (const width of [1280, 736, 390, 320]) {
+      await page.setViewportSize({width, height: 1000});
+      check(await page.locator('.precision-table').evaluateAll(nodes => nodes.every(el => el.getBoundingClientRect().height === 240)), 'Precise tables must keep240px at width' + width);
+      check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Expanded tables must not overflow page width' + width);
+    }
+    const latencyTable = page.locator('#ttfb-rows').locator('xpath=ancestor::div[contains(@class,"precision-table")]');
+    await latencyTable.scrollIntoViewIfNeeded();
+    check(await latencyTable.evaluate(el => { el.scrollTop = 100; const top = el.getBoundingClientRect().top, head = el.querySelector('th').getBoundingClientRect().top; return el.scrollTop > 0 && Math.abs(head - top) < 2; }), 'Precise table headers must remain sticky during scrolling');
+    check(await page.locator('#token-chart-detail').count() === 1 && await page.locator('#token-chart-detail').evaluate(el => !el.closest('details')), 'Bottom detail must stay outside collapsed precise tables');
+    result.horizontalDistributionsAndFixedTables = true;
     check(await page.locator('#token-chart .chart-overlay').count() === 1, 'Token plot needs one inspection overlay');
     async function hoverMinute(id, fraction, vertical = .5) {
       const plot = page.locator('#' + id + ' .chart-overlay'); await plot.scrollIntoViewIfNeeded();
@@ -185,7 +200,8 @@ async (page, {screenshots = '.verification/task-4-browser', only} = {}) => {
     check(await page.locator('#token-chart .chart-marker').count() === 0, 'Missing minute cannot have measured markers');
     await hoverMinute('token-chart', 0);
     check((await page.locator('#token-chart .chart-tooltip').textContent()).includes('未观测'), 'Unknown usage cannot be zero');
-    const retained = await page.locator('#token-chart-detail').textContent(); await page.mouse.move(0, 0);
+    const retained = await page.locator('#token-chart-detail').textContent();
+    await page.waitForTimeout(1700); await page.mouse.move(0, 0);
     check(await page.locator('#token-chart .chart-tooltip').isHidden(), 'Leave must hide floating detail');
     check(await page.locator('#token-chart-detail').textContent() === retained, 'Leave must retain bottom detail');
     await page.locator('#token-chart').focus(); await page.keyboard.press('ArrowRight');

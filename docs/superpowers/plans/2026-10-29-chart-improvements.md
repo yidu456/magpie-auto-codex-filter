@@ -55,10 +55,10 @@
 **Files:** console/ui/app.js, console/ui/app.css, console/ui/index.html, console/charts.test.cjs, console/assets.test.cjs, scripts/browser-smoke.js, SHA256SUMS.txt.
 **Interfaces:** histogram keeps real bounds/count/sum semantics, displays horizontal counts/share. Error-category ranking consumes errorsByKind, retains category/code exact tables and safe bounded labels.
 
-- [ ] Add RED checks for histogram consistency, eight labeled intervals, zero bins, count/share arithmetic, sorted error ranking, malicious labels and fixed-height table markup.
-- [ ] Replace vertical bins with horizontal rows and add sorted error-category bars. Keep mean/sample explanations; no percentile estimates. Wrap precise tables in details with240px internal scrolling/sticky headers; retain bottom chart detail outside tables.
-- [ ] Update existing histogram browser expectation deliberately; run focused and manifest tests, desktop/mobile/expanded-table visual acceptance.
-- [ ] Review, record evidence and commit feat: clarify metric distributions and precise tables.
+- [x] Add RED checks for histogram consistency, eight labeled intervals, zero bins, count/share arithmetic, sorted error ranking, malicious labels and fixed-height table markup.
+- [x] Replace vertical bins with horizontal rows and add sorted error-category bars. Keep mean/sample explanations; no percentile estimates. Wrap precise tables in details with240px internal scrolling/sticky headers; retain bottom chart detail outside tables.
+- [x] Update existing histogram browser expectation deliberately; run focused and manifest tests, desktop/mobile/expanded-table visual acceptance.
+- [x] Review, record evidence and commit feat: clarify metric distributions and precise tables.
 
 ## Task 4: Integration Acceptance And Handoff
 

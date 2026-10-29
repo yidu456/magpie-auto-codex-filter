@@ -114,3 +114,11 @@
 - Phase16 Task2 focused13/13 and initial expanded metrics browser smoke pass/pageErrors[]. Private native touchscreen and48edge hover assertions across1280/736/390/320 pass; reviewed320request tooltip+retained bottom. Added final single-minute/stale-window/empty replacement browser cases; final gates/review pending.
 
 - Phase16 Task2 final expanded metrics smoke passed including polling focus/zero,null/gap,single bucket,stale-window and emptyreplacement; pageErrors[]. Fresh13focused/strictmanifest and diff check pass. Independent review approved no actionable findings, reviewer independently13pass. Local Task2 commit then Task3.
+
+- Phase16 Task2 committed2e120c0. Task3 RED observed missing histogramRows/rankedErrors and0/8 precision disclosures. Replaced SVG histograms with native horizontal rows/count/share; validate bin count consistency; sorted bounded safe error labels. Eight dashboard precision tables now native details with240px scroll/sticky headers; bottom detail outside details. Focused/browser gates pending.
+
+- Task3 gates revealed fixture extraction omitted actual kinds constant; include its source, not a mock. Browser expanded-table case reproducibly lost native pointerleave after SVG replacement; private event trace sees moves90/511 to0/0 but no leave and inspect=true. Root fix: once-per-chart document move hides outside container; explicit1700ms poll-before-leave regression. No backend change.
+
+- Task3 final16focused/strictmanifest pass; expanded metrics smoke horizontalDistributionsAndFixedTables/pointerAndRetainedDetails/safeMetadata=true,pageErrors[]. Private4width acceptance height240/sticky/native touch/tooltipedge passes;390TTFB and320table screenshots inspected. Review pending.
+
+- Phase16 Task3 independent review approved no actionablefindings; reviewer independently16focused/strictmanifest anddiffcheck pass incl redrawleave fallback. Local Task3 commit then final Task4 acceptance.
