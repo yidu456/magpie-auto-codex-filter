@@ -88,7 +88,8 @@ function parseLsof(output, port) {
 function parsePs(output, pid) {
   const rows = lines(output);
   const match = rows.length === 1 && /^\s*(\d+)\s+(\d+)\s+(\d+)\s+([A-Za-z]{3} [A-Za-z]{3}\s+\d{1,2} \d{2}:\d{2}:\d{2} \d{4})\s+(.+)$/.exec(rows[0]);
-  if (!match || Number(match[1]) !== pid || !match[5].startsWith('/') || !text(match[5], 4096)) throw fail('PORT_INSPECTION_FAILED');
+  // macOS comm may be a basename; absolute-path and strong-identity checks belong to safety().
+  if (!match || Number(match[1]) !== pid || !text(match[5], 4096)) throw fail('PORT_INSPECTION_FAILED');
   return {pid, parent: Number(match[2]), user: match[3], started: match[4], executable: match[5], name: path.posix.basename(match[5]), critical: false};
 }
 

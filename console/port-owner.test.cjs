@@ -380,14 +380,45 @@ test('macOS coarse ps identity is display-only and never terminates an unsupport
   assert.ok(commands.every(({file}) => file === '/usr/sbin/lsof' || file === '/bin/ps'));
 });
 
-test('macOS ancestor basename currently fails closed even when the target executable is absolute', async () => {
+test('macOS basename ancestor does not erase tracked listener metadata or permit termination', async () => {
+  const records = {
+    321: ' 321 100 501 Thu Oct 29 03:21:09 2026     /Users/runner/hostedtoolcache/node/24.12.0/arm64/bin/node\n',
+    100: ' 100 99 501 Thu Oct 29 03:21:09 2026     /Users/runner/hostedtoolcache/node/24.12.0/arm64/bin/node\n',
+    99: ' 99 1 501 Thu Oct 29 03:20:49 2026     node\n'
+  };
   const adapter = createPortOwner({platform: 'darwin', currentPid: 100, currentPpid: 99, currentUser: '501',
     runCommand: async (file, args) => {
       if (file === '/usr/sbin/lsof') return 'p321\nf7\nn*:18193\n';
-      const pid = Number(args[1]);
-      return `${pid} ${pid === 321 ? 111 : 99} 501 Wed Oct 28 08:09:10 2026 ${pid === 321 ? '/opt/fixture' : 'node'}\n`;
+      return records[Number(args[1])];
     }, killProcess: () => assert.fail('macOS inspection must never kill')});
-  assert.deepEqual(await adapter.inspect(18193), {port: 18193, owner: null, canTerminate: false, reason: 'PORT_INSPECTION_FAILED'});
+  const conflict = await adapter.inspect(18193);
+  assert.deepEqual(conflict, {port: 18193, owner: {pid: 321, name: 'node',
+    executable: '/Users/runner/hostedtoolcache/node/24.12.0/arm64/bin/node', started: 'Thu Oct 29 03:21:09 2026'},
+    canTerminate: false, reason: 'IDENTITY_UNAVAILABLE'});
+  await assert.rejects(adapter.terminate(18193, conflict.owner), {code: 'PORT_OWNER_UNSAFE'});
+});
+
+test('macOS basename listener stays display-only and malformed ancestors still fail closed', async () => {
+  for (const [ancestor, reason] of [
+    ['99 1 501 Thu Oct 29 03:20:49 2026 node\n', 'IDENTITY_UNAVAILABLE'],
+    ['99 100 501 Thu Oct 29 03:20:49 2026 node\n', 'PORT_INSPECTION_FAILED'],
+    ['98 1 501 Thu Oct 29 03:20:49 2026 node\n', 'PORT_INSPECTION_FAILED'],
+    ['99 1 501 Thu Oct 29 03:20:49 2026 bad\x00name\n', 'PORT_INSPECTION_FAILED'],
+    ['99 1 501 missing identity\n', 'PORT_INSPECTION_FAILED']
+  ]) {
+    const adapter = createPortOwner({platform: 'darwin', currentPid: 100, currentPpid: 99, currentUser: '501',
+      runCommand: async (file, args) => {
+        if (file === '/usr/sbin/lsof') return 'p321\nf7\nn*:18193\n';
+        const pid = Number(args[1]);
+        return pid === 99 ? ancestor : `${pid} ${pid === 100 ? 99 : 100} 501 Thu Oct 29 03:21:09 2026 node\n`;
+      }, killProcess: () => assert.fail('macOS basename metadata must never permit termination')});
+    const conflict = await adapter.inspect(18193);
+    assert.equal(conflict.canTerminate, false);
+    assert.equal(conflict.reason, reason);
+    assert.deepEqual(conflict.owner, reason === 'IDENTITY_UNAVAILABLE'
+      ? {pid: 321, name: 'node', executable: 'node', started: 'Thu Oct 29 03:21:09 2026'} : null);
+    await assert.rejects(adapter.terminate(18193, conflict.owner), {code: 'PORT_OWNER_UNSAFE'});
+  }
 });
 
 test('native Windows terminates only a tracked disposable listener while an unrelated fixture survives', {skip: process.platform !== 'win32', timeout: 120000}, async t => {
