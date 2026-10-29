@@ -64,7 +64,7 @@
 
 **Files:** scripts/browser-smoke.js, docs/verification-phase16.md, SHA256SUMS.txt and selected planning files.
 
-- [ ] Extend isolated browser acceptance for real metric fixtures: combined scales, smooth endpoints, pointer tooltip/all values, missing minutes and Token gaps, zero, repeated polls, safe text, keyboard/touch,240px tables and sticky headers; 1280/736/390/320 widths.
-- [ ] Run complete browser harness and npm test at stable final bytes; run strict source manifest and git diff --check. Preserve/verify existing refs and EXE hashes read-only.
-- [ ] Independent final review; repair and rerun relevant gates if needed.
-- [ ] Record exact evidence/limits, mark Phase16 complete and commit docs: record chart acceptance. Report commit per item; no automatic push or release.
+- [x] Extend isolated browser acceptance for real metric fixtures: combined scales, smooth endpoints, pointer tooltip/all values, missing minutes and Token gaps, zero, repeated polls, safe text, keyboard/touch,240px tables and sticky headers; 1280/736/390/320 widths.
+- [x] Run complete browser harness and npm test at stable final bytes; run strict source manifest and git diff --check. Preserve/verify existing refs and EXE hashes read-only.
+- [x] Independent final review; repair and rerun relevant gates if needed.
+- [x] Record exact evidence/limits, mark Phase16 complete and commit docs: record chart acceptance. Report commit per item; no automatic push or release.

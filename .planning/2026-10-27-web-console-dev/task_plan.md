@@ -4,7 +4,7 @@
 Preserve the completed dev console and adapt selected V11 capabilities on dev-2, with a verified commit per step.
 
 ## Next Step
-Phase16 approved: implement combined smooth request/Token curves, pointer-near tooltip plus retained bottom detail, horizontal distributions and fixed240px precision tables. Sequential reviewed local commit per item; detailed checklist in docs/superpowers/plans/2026-10-29-chart-improvements.md. Phase15 Release, refs and local EXEs preserved. Task0/Task1/Task2/Task3 complete and verified; next Task4 full acceptance and evidence-only commit.
+Phase16 complete: combined smooth curves, pointer-near tooltip with retained bottom detail, horizontal distributions and240px precision tables verified. Every item committed locally after review. Full445total443pass0fail2skip; complete browser/pageErrors[] and16focused gates pass. Phase15 Release, refs and local EXEs preserved. No push or rebuild; await next user request.
 
 ## Current Phase
 Phase 16
@@ -95,8 +95,10 @@ Phase 16
 - Phase15 final acceptance: Release https://github.com/yidu456/magpie-auto-codex-filter/releases/tag/v0.1.0-dev.1 is non-draft/prerelease, exactly8assets. Tag40820263107 and branch40820262868 succeed; Windows435pass2skip and Unix432pass5skip/437total, all0fail. Downloaded629-byte aggregate SHA256SUMS matches its GitHub digest; seven rows match the other uploaded asset digests. No full binary redownload claimed.
 
 ### Phase 16: Approved chart improvements
-**Status:** in_progress
+**Status:** complete
 - User approved combined high-contrast smooth curves, then requested implementation, pointer-position popover with bottom details retained, persistent step plan and local commit after each completed item.
 - Task0: plan/baseline. Task1: smooth trends. Task2: exact-minute hover/touch/keyboard details. Task3: distributions and fixed240px precise tables. Task4: complete isolated acceptance and evidence.
 - Existing metric semantics, authentication, CSP and runtime unchanged. No dependencies, push, tags, version bump or binary rebuild. Null/missing remains unobserved; curves do not invent statistics.
 - Baseline clean dev-2 at50b0bf4; focused assets and manifest8/8 pass. Reference repository and previous preview remain read-only inputs.
+
+- Phase16 final acceptance: Task1ca2ec02,Task22e120c0,Task39447b8e; final full suite445total443pass0fail2skip147710ms at stable document/source bytes. Complete isolated Chrome acceptance all chart flags true/pageErrors[],4widths/native touch/240px/sticky pass; scoped reviews approved. Local-only final acceptance commit; no new Release or binary rebuild.

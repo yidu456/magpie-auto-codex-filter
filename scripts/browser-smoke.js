@@ -153,7 +153,7 @@ async (page, {screenshots = '.verification/task-4-browser', only} = {}) => {
     snapshot.latency = {ttfb: {boundsMs: [100, 500, 1000, 3000, 10000, 30000, 60000], counts: [1, 0, 1, 0, 0, 0, 0, 0], count: 2, sumMs: 1000}, duration: {boundsMs: [100, 500, 1000, 3000, 10000, 30000, 60000], counts: [0, 0, 0, 2, 0, 0, 0, 0], count: 2, sumMs: 4000}};
     const minute = Math.floor(Date.now() / 60000) * 60000;
     snapshot.series = [{minute: minute - 120000, started: 2, success: 1, failed: 1, canceled: 0, unavailable: 0, retries: 1, inputTokens: null, outputTokens: null}, {minute, started: 3, success: 1, failed: 0, canceled: 1, unavailable: 1, retries: 2, inputTokens: 12, outputTokens: 4}];
-    snapshot.errorsByCode = {[malicious]: 2, rate_limit_exceeded: 1}; snapshot.errorsByKind = {transport: 2, rateLimit: 1}; snapshot.byModel = {[malicious]: 3, other: 2};
+    snapshot.errorsByCode = {[malicious]: 2, rate_limit_exceeded: 1}; snapshot.errorsByKind = {transport: 2, rateLimit: 1, [malicious]: 1}; snapshot.byModel = {[malicious]: 3, other: 2};
     const record = {requestId: 'fixture:1:1', startedAt: new Date(minute).toISOString(), finishedAt: null, model: null, enabled: false, streaming: null, policyRevision: 0, phase: 'upstream', status: null, ttfbMs: null, durationMs: null, outcome: null, usage: null, usageState: 'pending', observationAvailable: false, retryScheduled: 1, retryDispatched: 0, retryKinds: [], errorCode: null, errorKind: null};
     snapshot.active = [{...record, elapsedMs: 1234}];
     snapshot.recent = [{...record, requestId: 'fixture:1:2', model: malicious, enabled: true, streaming: true, phase: 'finished', finishedAt: new Date().toISOString(), status: 200, ttfbMs: 100, durationMs: 2000, outcome: 'success', usageState: 'observed', observationAvailable: true, usage: {input_tokens: 12, output_tokens: 4, total_tokens: 16, input_tokens_details: {cached_tokens: 3}}, retryScheduled: 4, retryDispatched: 3, errorCode: malicious, errorKind: 'transport'}];
@@ -177,6 +177,7 @@ async (page, {screenshots = '.verification/task-4-browser', only} = {}) => {
       await page.setViewportSize({width, height: 1000});
       check(await page.locator('.precision-table').evaluateAll(nodes => nodes.every(el => el.getBoundingClientRect().height === 240)), 'Precise tables must keep240px at width' + width);
       check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Expanded tables must not overflow page width' + width);
+      await page.waitForFunction(() => ['request-chart', 'token-chart'].every(id => { const el = document.getElementById(id); return el.querySelector('svg').viewBox.baseVal.width === el.clientWidth; }));
     }
     const latencyTable = page.locator('#ttfb-rows').locator('xpath=ancestor::div[contains(@class,"precision-table")]');
     await latencyTable.scrollIntoViewIfNeeded();
@@ -214,6 +215,19 @@ async (page, {screenshots = '.verification/task-4-browser', only} = {}) => {
     const touchBox = await hoverMinute('token-chart', 1);
     await page.locator('#token-chart .chart-overlay').dispatchEvent('pointerdown', {pointerType: 'touch', clientX: touchBox.x + touchBox.width - 4, clientY: touchBox.y + 20});
     check(await page.locator('#token-chart .chart-tooltip').isVisible(), 'Touch must inspect minute values');
+    injected = {...snapshot, series: [0, 1, 2].map((i) => ({minute: minute - (2 - i) * 60000, success: [0, 3, 0][i], failed: [1, 0, 1][i], canceled: 0, unavailable: 0, retries: [0, 3, 0][i], inputTokens: [0, 20, 10][i], outputTokens: [0, 5, 2][i]}))};
+    await page.waitForFunction(() => document.querySelector('#request-chart [data-series="success"]').getAttribute('d').includes(' C'));
+    const sharedScale = await page.locator('#request-chart').evaluate(el => {
+      const paths = [...el.querySelectorAll('.chart-line')];
+      return paths.length === 5 && !el.querySelector('[data-series="started"]') && paths.every(path => path.getAttribute('d').includes(' C'))
+        && el.querySelector('[data-series="success"]').getAttribute('d') === el.querySelector('[data-series="retries"]').getAttribute('d');
+    });
+    check(sharedScale, 'Five result/retry curves must share a linear scale and preserve common endpoints');
+    await hoverMinute('token-chart', 0);
+    check((await page.locator('#token-chart-detail').textContent()).includes('输入 Token：0'), 'Measured zero token bucket must remain inspectable');
+    await hoverMinute('token-chart', 1);
+    check((await page.locator('#token-chart-detail').textContent()).includes('输入 Token：10'), 'Curve tooltip must report measured endpoint, not interpolation');
+    result.combinedSmoothSharedScale = true;
     injected = {...snapshot, series: [{minute: minute + 60000, inputTokens: 7, outputTokens: 2}]};
     await page.waitForFunction(() => document.getElementById('token-chart-detail').textContent.includes('已移出'));
     await hoverMinute('token-chart', .5);
@@ -231,6 +245,8 @@ async (page, {screenshots = '.verification/task-4-browser', only} = {}) => {
     check((await page.locator('#metric-diagnostics').textContent()).includes('INVALID_SNAPSHOT'), 'Persistence warning missing');
     check((await page.locator('#model-rows').textContent()).includes(malicious), 'Model must render literally');
     check((await page.locator('#error-code-rows').textContent()).includes(malicious), 'Error code must render literally');
+    check((await page.locator('#error-kind-chart').textContent()).includes(malicious.slice(0, 80)), 'Error ranking must render bounded untrusted labels literally');
+    check((await page.locator('#error-kind-rows').textContent()).includes(malicious), 'Exact category table must retain full literal labels');
     check(await page.locator('#controls img').count() === 0 && !await page.evaluate(() => globalThis.pwned), 'Dynamic metadata executed HTML');
     injected = {...snapshot, totals: {...snapshot.totals, started: 6}, active: [{...snapshot.active[0], elapsedMs: 2234}]};
     await page.waitForFunction(() => document.getElementById('daily-started').textContent === '6');

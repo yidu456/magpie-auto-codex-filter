@@ -122,3 +122,13 @@
 - Task3 final16focused/strictmanifest pass; expanded metrics smoke horizontalDistributionsAndFixedTables/pointerAndRetainedDetails/safeMetadata=true,pageErrors[]. Private4width acceptance height240/sticky/native touch/tooltipedge passes;390TTFB and320table screenshots inspected. Review pending.
 
 - Phase16 Task3 independent review approved no actionablefindings; reviewer independently16focused/strictmanifest anddiffcheck pass incl redrawleave fallback. Local Task3 commit then final Task4 acceptance.
+
+- Phase16 Task3 committed9447b8e. Task4 extends final isolated browser assertions for equal-valued curves sharing geometry,actual cubic paths,measured zero/endpoint Token values,malicious error ranking labels,all4width viewBox matching. Final public application bytes frozen at9447b8e; acceptance script only extension. Full suite/browser acceptance next.
+
+- Task4 full browser run caught acceptance-only mismatch: malicious category label>80, production deliberatelybounds80; test expected full string. Independent reviewer P2 confirms. Adjust expectation to literal first80 and keep full exact-table/noexecution checks; application unchanged. First full npm stillrunning at frozen initial acceptance script bytes; wait beforepublic edit.
+
+- Task4 first full npm suite445total443pass0fail2skip137140ms at frozen app bytes. Verified reviewfinding: chartlabel length80 while fixture>80, fixed acceptance expectation and full exact-category table assertion; no application change. Failed log retained; final full browser rerun next.
+
+- Task4 corrected complete browser harness passes allcases including combinedSmoothSharedScale, horizontalDistributionsAndFixedTables,pointerAndRetainedDetails,safeMetadata,pageErrors[]. Runtime hashes unchanged; source/refs/EXEs/version assertions preserved.json pass. Added verification-phase16.md with exact known results/limits, strict inventory includesdoc. Repeating full npm at final document/source bytes; finalreview pending.
+
+- Phase16 Task4 repeated full npm at final document/source bytes445total443pass0fail2skip147710ms. Corrected complete browserallcases/pageErrors[];16focused/strictmanifest anddiffcheck pass. Independent final reviewapproved after checkingdoc/logs/runtimehashes/refs/EXEs/smokehash, conditional only on repeatedfull now satisfied. Phase16 complete; final acceptance localcommit next; all published artifacts and localEXEs remainunchanged.
