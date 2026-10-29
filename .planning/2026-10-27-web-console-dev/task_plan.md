@@ -4,7 +4,7 @@
 Preserve the completed dev console and adapt selected V11 capabilities on dev-2, with a verified commit per step.
 
 ## Next Step
-Phase13 Tasks1-3 reviewed complete. Implement Task6 optional auth, Task8 forced disconnect, Task7 app identity/final rebuild, then Task4 release workflow and Task5 acceptance. No remote publishing or real-user process termination.
+Phase13 complete: Task4 release workflow544340d and Task5 docs95cca81 reviewed, whole-change review approved with no actionable findings. Stable final suite419pass/2nativeUnixskip plus isolated extracted Windows acceptance passed. Keep dev-2 local/unmerged and dev-3 candidate available. Native Unix CI, remote publishing and real-client migration await separate user authorization.
 
 ## Current Phase
 Phase 13
@@ -70,7 +70,8 @@ Phase 13
 - Four pages implemented; final branch review and singleton size correction approved, rebuilt EXE verified. Full327/327 plus isolated source/packaged browser and standalone lifecycle acceptance.
 
 ### Phase 13: Cross-platform release and confirmed port takeover
-**Status:** in_progress
+**Status:** complete
 - User requested GitHub Actions automatic Release packages for Windows, macOS and Linux, plus explicit yes/no termination of identified filter-port owner before enabling.
 - Proposed Windowsx64/macOSarm64+x64/Linuxx64, embedded runtime, v* tag releases; identity revalidation, no silent privilege escalation/critical-process termination/recovery bypass.
 - User approved with continue on2026-10-28. Plan: docs/superpowers/plans/2026-10-28-port-takeover-release.md. Native macOS/Linux CI execution and remote release remain unperformed.
+- Completed on2026-10-29: all eight tasks and independent final review approved; exact Windows candidate/archive hashes and limits in docs/verification-phase13.md. No user process/configuration or delivered binary was changed during final workflow/docs work.

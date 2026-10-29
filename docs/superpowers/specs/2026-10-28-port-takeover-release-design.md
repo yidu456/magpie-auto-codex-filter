@@ -8,7 +8,7 @@ User approved the in-chat design with "continue" on 2026-10-28. Baseline cac5e33
 
 - Preserve live user configurations/processes and existing dist/portable and root dist artifacts. Development termination tests may target only explicitly created fixture children. No real port takeover, remote push/tag/release, signing credential use or privilege elevation during this task.
 - Keep core filtering, retry bounds, policy snapshots, four pages, protected management API, portable configuration and recovery ownership unchanged except the explicitly confirmed conflict flow.
-- New local builds use dist/phase13 and never overwrite delivered dist/dev-2. Runtime remains dependency-free; reuse Node24.12.0, esbuild and postject.
+- New local builds use dist/phase13 and never overwrite delivered dist/dev-2. The user later requested copying the final EXE and licenses to fresh dist/dev-3 before testing, because dist/dev-2 is running; tests still use isolated fixture runtimes. Runtime remains dependency-free; reuse Node24.12.0, esbuild and postject.
 
 ## 1. Port Occupancy and Consent
 
