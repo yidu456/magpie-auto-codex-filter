@@ -96,3 +96,7 @@
 - Phase15 published: tag40820263107 atc8d5bd7 complete success including four native jobs and publish; branch40820262868 also successful. Live Release API confirms v0.1.0-dev.1 non-draft prerelease with exactly8uploaded assets. Downloaded629-byte SHA256SUMS self-hash matches GitHub asset digest; all7rows match corresponding uploaded asset digests. Verification JSON/metadata/tag logs retained privately under .superpowers/sdd/2026-10-29-release-dev-1. Oldtag/main and both delivered EXE hashes preserved. No PAT, manual release bypass, local binary rebuild or user-process action. Final evidence-only review next.
 
 - Phase15 final evidence-only review approved: saved release metadata,629-byte checksum/self-digest+7asset-digest comparisons, native totals, annotated tag target and preserved refs/EXE hashes independently checked. Only planning bookkeeping changes after publishedc8d5bd7; public source, release assets and tag are frozen.
+
+- Phase16 started2026-10-29: approved preview and exact pointer-near popover/bottom detail requirements recorded. User requests sequential plan and commit per completed item. Clean dev-2 at50b0bf4; selected plan resolved with PLAN_ID. Fresh assets/source-manifest8/8 baseline passes. No production edit yet; plan commit next.
+
+- Phase16 Task0 independent review approved; plan covers measurement/unknown boundaries, pointer popover plus retained bottom detail, mobile/keyboard, fixed240px tables and local commit gates. Plan-only commit, then Task1 RED/GREEN.
