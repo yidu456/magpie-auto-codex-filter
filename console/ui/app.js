@@ -160,13 +160,16 @@ function inspectTrend(id, view) {
   tooltip.replaceChildren(heading);
   if (data.message) { const text = document.createElement('p'); text.textContent = data.message; tooltip.append(text); }
   for (const [index, [name, value]] of data.rows.entries()) {
+    if (view.hidden.has(fields[index][0])) continue;
     const row = document.createElement('div'), label = document.createElement('span'), amount = document.createElement('b');
     label.className = 'color-' + index; label.textContent = name; amount.textContent = value; row.append(label, amount); tooltip.append(row);
   }
-  if (view.minute >= series[0].minute && view.minute <= series.at(-1).minute) {
+  const anyVisible = fields.some(([key]) => !view.hidden.has(key));
+  if (!anyVisible) { const text = document.createElement('p'); text.textContent = '已关闭全部曲线；点击图例恢复。'; tooltip.append(text); }
+  if (anyVisible && view.minute >= series[0].minute && view.minute <= series.at(-1).minute) {
     const x = view.x(view.minute);
     guide.append(svgElement('line', {x1: x, x2: x, y1: view.top, y2: view.bottom, class: 'chart-guide'}));
-    fields.forEach(([key], index) => { if (finite(data.bucket?.[key])) guide.append(svgElement('circle', {cx: x, cy: view.y(data.bucket[key]), r: 4, class: 'chart-marker color-' + index})); });
+    fields.forEach(([key], index) => { if (!view.hidden.has(key) && finite(data.bucket?.[key])) guide.append(svgElement('circle', {cx: x, cy: view.y(data.bucket[key]), r: 4, class: 'chart-marker color-' + index})); });
   }
   const box = tooltip.getBoundingClientRect(), container = $(id);
   const position = tooltipPosition(view.anchor.x, view.anchor.y, container.clientWidth, container.clientHeight, box.width, box.height);
@@ -175,7 +178,7 @@ function inspectTrend(id, view) {
 function trend(id, series, fields) {
   let view = trendViews.get(id);
   if (!view) {
-    view = {}; trendViews.set(id, view);
+    view = {hidden: new Set()}; trendViews.set(id, view);
     const container = $(id); container.tabIndex = 0; container.setAttribute('role', 'group');
     container.setAttribute('aria-label', '分钟趋势；左右方向键查看精确数据'); container.setAttribute('aria-describedby', id + '-detail');
     const hide = () => { view.inspect = false; inspectTrend(id, view); };
@@ -191,9 +194,16 @@ function trend(id, series, fields) {
     container.addEventListener('pointerleave', hide); container.addEventListener('blur', hide);
     // Replaced SVG hit targets can lose native leave events after a redraw.
     document.addEventListener('pointermove', event => { if (view.inspect && !container.contains(event.target)) hide(); });
+    container.addEventListener('click', event => {
+      const button = event.target.closest('button.legend-toggle');
+      if (!button || !container.contains(button) || !view.fields.some(([key]) => key === button.dataset.series)) return;
+      const key = button.dataset.series;
+      if (view.hidden.has(key)) view.hidden.delete(key); else view.hidden.add(key);
+      view.inspect = false; drawTrend(id, view);
+    });
     container.addEventListener('keydown', event => {
       if (event.key === 'Escape') { hide(); return; }
-      if (!['ArrowLeft', 'ArrowRight'].includes(event.key) || !view.series.length || !view.svg) return;
+      if (event.target !== container || !['ArrowLeft', 'ArrowRight'].includes(event.key) || !view.series.length || !view.svg) return;
       event.preventDefault();
       const index = view.series.findIndex(row => row.minute === view.minute);
       const next = index < 0 ? event.key === 'ArrowLeft' ? view.series.length - 1 : 0 : Math.max(0, Math.min(view.series.length - 1, index + (event.key === 'ArrowRight' ? 1 : -1)));
@@ -208,15 +218,27 @@ function trend(id, series, fields) {
 }
 function drawTrend(id, view) {
   const {series, fields} = view;
+  const container = $(id), focusKey = container.contains(document.activeElement) ? document.activeElement.dataset?.series : undefined;
+  const legend = document.createElement('div'); legend.className = 'chart-legend';
+  fields.forEach(([key, name], index) => {
+    const item = document.createElement('button'), swatch = document.createElement('i'), visible = !view.hidden.has(key);
+    item.type = 'button'; item.className = 'legend-toggle'; item.dataset.series = key;
+    item.setAttribute('aria-pressed', String(visible)); item.setAttribute('aria-label', name + '曲线');
+    item.title = (visible ? '点击隐藏' : '点击显示') + name + '曲线';
+    swatch.className = 'legend-swatch color-' + index; swatch.setAttribute('aria-hidden', 'true');
+    item.append(swatch, document.createTextNode(name)); legend.append(item);
+  });
+  const restoreLegendFocus = () => { if (focusKey !== undefined) [...legend.children].find(node => node.dataset.series === focusKey)?.focus({preventScroll: true}); };
   if (!series.length || !series.some(bucket => fields.some(([key]) => finite(bucket[key])))) {
     emptyChart(id, '暂无可用分钟观测；不会补造缺失数据。');
     view.svg = view.tooltip = null; view.inspect = false;
     view.detail = document.createElement('p'); view.detail.id = id + '-detail'; view.detail.className = 'chart-detail';
-    $(id).append(view.detail); inspectTrend(id, view); return;
+    container.prepend(legend); container.append(view.detail); inspectTrend(id, view); restoreLegendFocus(); return;
   }
   const width = $(id).clientWidth; if (!width) return;
   const height = 290, left = 52, right = width - 14, top = 30, bottom = 248;
-  const svg = chartShell(id, fields.map(([, name]) => name).join('、') + '分钟趋势，共用线性刻度；平滑不改变分钟值', width, height);
+  const visibleNames = fields.filter(([key]) => !view.hidden.has(key)).map(([, name]) => name);
+  const svg = chartShell(id, (visibleNames.join('、') || '全部曲线已关闭') + '分钟趋势，共用线性刻度；平滑不改变分钟值', width, height);
   const max = Math.max(1, ...series.flatMap(bucket => fields.map(([key]) => finite(bucket[key]) ? bucket[key] : 0)));
   const magnitude = 10 ** Math.floor(Math.log10(max / 4)), step = Math.max(1, Math.ceil(max * 1.1 / 4 / magnitude) * magnitude), ceiling = step * 4;
   const first = series[0].minute, last = series.at(-1).minute;
@@ -228,9 +250,8 @@ function drawTrend(id, view) {
     svg.append(svgElement('line', {x1: left, x2: right, y1: y(value), y2: y(value), class: 'chart-axis'}),
       svgElement('text', {x: left - 8, y: y(value) + 4, 'text-anchor': 'end', class: 'chart-label'}, value >= 1000 ? number(value / 1000) + 'k' : number(value)));
   }
-  const legend = document.createElement('div'); legend.className = 'chart-legend';
   fields.forEach(([key, name], index) => {
-    for (const part of chartSegments(series, key)) {
+    for (const part of view.hidden.has(key) ? [] : chartSegments(series, key)) {
       const path = smoothPath(part.map(bucket => ({x: x(bucket.minute), y: y(bucket[key])})));
       if (id === 'token-chart' && index === 0 && part.length > 1) svg.append(svgElement('path', {d: path + ` L${x(part.at(-1).minute)},${bottom} L${x(part[0].minute)},${bottom} Z`, class: 'chart-area color-' + index}));
       svg.append(svgElement('path', {d: path, class: 'chart-line color-' + index, 'data-series': key}));
@@ -239,10 +260,9 @@ function drawTrend(id, view) {
         point.append(svgElement('title', {}, time(bucket.minute) + ' ' + name + '：' + number(bucket[key]))); svg.append(point);
       }
     }
-    const item = document.createElement('span'), swatch = document.createElement('i'); swatch.className = 'legend-swatch color-' + index;
-    item.append(swatch, document.createTextNode(name)); legend.append(item);
   });
-  $(id).prepend(legend);
+  container.prepend(legend);
+  if (!visibleNames.length) svg.append(svgElement('text', {x: (left + right) / 2, y: 140, 'text-anchor': 'middle', class: 'chart-label'}, '全部曲线已关闭'));
   const tickCount = first === last ? 1 : width < 430 ? 3 : 5;
   for (let i = 0; i < tickCount; i++) {
     const minute = tickCount === 1 ? first : first + (last - first) * i / (tickCount - 1);
@@ -253,7 +273,7 @@ function drawTrend(id, view) {
   const guide = svgElement('g', {'aria-hidden': 'true'}), overlay = svgElement('rect', {x: left, y: top, width: right - left, height: bottom - top, class: 'chart-overlay'});
   const tooltip = document.createElement('div'); tooltip.className = 'chart-tooltip'; tooltip.hidden = true; tooltip.setAttribute('aria-hidden', 'true');
   svg.append(guide, overlay); $(id).append(tooltip, detail);
-  Object.assign(view, {svg, detail, guide, tooltip, x, y, left, right, top, bottom}); inspectTrend(id, view);
+  Object.assign(view, {svg, detail, guide, tooltip, x, y, left, right, top, bottom}); inspectTrend(id, view); restoreLegendFocus();
 }
 function histogramRows(histogram) {
   const valid = histogram && finite(histogram.count) && Number.isInteger(histogram.count) && histogram.count > 0 && finite(histogram.sumMs)

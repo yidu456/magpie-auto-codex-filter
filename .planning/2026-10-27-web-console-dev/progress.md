@@ -140,3 +140,17 @@
 - Phase17 packaged full browser harness passes allcases includingcombinedSmoothSharedScale/horizontalDistributionsAndFixedTables/pointerAndRetainedDetails,pageErrors[]. Owned fixture portconsent passes cancelpreservesowner/confirmedtermination/exactrestore; no userprocess action. Build artifactunchangedaftertests. Final buildrecordreview thenlocalhandoff.
 
 - Phase17 independent record review approved after recheckingcandidate size/hash/metadata/NotSigned, standalone/browser/consentlogs,oldhashes/refs,nofixturestate. Phase17 complete; local bookkeeping commit and candidatehandoff. Runtime/source1fbc046 unchanged; candidate is unsigned/notpublished; no realupstream validation.
+
+- Phase18 approved legendtoggle design. Clean dev-2 ba81ce8; dev-4 SHAverifiedunchanged anddev-5absent. Scope app.js/app.css/charttests/browser-smoke/SHAmanifest +existingplanbookkeeping; no backend/config changes. Nativebuttons must keep focus through poll redraw, suppress chart arrow handling while a legend is focused; all series startvisible afterreload. RED first.
+
+- Phase18 expected RED: charttest missingnativebuttons andbrowser0/7operablebuttons. Implemented perviewhiddenSet/nativearia-pressed controls, visible-onlycurves/fill/markers/tooltip, completebottom/table, fixedaxis, sessionselection andfocusedlegendrestoration. Unit8/8GREEN; fullbehaviorbrowser thenexposed requestfailedswatch stillred: existing#request-chart .color-1 outranks generic hiddenlegend selector. Add scopedhiddenoverride; no statisticalchange.
+
+- Phase18 focused17/17 inclstrictmanifestGREEN. Behavior smoke reached datareplacement but test waited for singletonMpath visibility (zero painted extent); correct check is attachedpath plusvisiblemeasuredcircle, no productionchange. Private4viewport/native legendtouch/focusedpoll retention/48hoveredge/240pxsticky checks pass;390request and320Token screenshots inspected. Source finalfocused/fullbrowser acceptance next.
+
+- Full navigation smoke oldassertion countedallbuttonsondashboard andexpectedonly2; nativechartbuttons are nowapproved so assert2nonlegendsettingscontrols plus7legendcontrols. No settings moved. Refreshedstrictmanifest; finalsource/browser/fullsuite gates now at stablebytes.
+
+- Phase18 fullbrowser progressedtonewsharedcurvefixture; oldunscoped [data-series] querynowmatcheslegendbuttonbeforeSVG, .getAttribute(d) isnull. Scope3oldshared-scale checks tosvg (newlegendchecks alreadybutton-scoped). No productionbug; pausepublicedits untilcurrentfullnpmfinish to keepstablebytes, thenrepeatfinalgates.
+
+- Phase18 initialfullsuite446total444pass0fail2skip143987ms. Independentreview17focusedpass/no productionfindings; confirmsoldtestselectorcollisions andnull==null falsepositive. Correctedallsharedpathselectors toSVG. Applicationunchanged; finalstrictmanifestupdated andfullbrowser/fullnpmrepeatnext; scopedreviewconditionpendingfreshgates.
+
+- Phase18 finalsource fullsuite446total444pass0fail2skip156774ms; completebrowserlegendVisibility/allpriorchartflags true,pageErrors[]. Final17focused/manifest/whitespace and4width nativelegendtouch pass. Independentreviewapproved withsource/old3EXE/refhashverification; finalsuiteconditionnowsatisfied. Featurelocalcommit thenfreshdev-5.

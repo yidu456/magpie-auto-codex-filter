@@ -4,10 +4,10 @@
 Preserve the completed dev console and adapt selected V11 capabilities on dev-2, with a verified commit per step.
 
 ## Next Step
-Phase16 complete: combined smooth curves, pointer-near tooltip with retained bottom detail, horizontal distributions and240px precision tables verified. Every item committed locally after review. Full445total443pass0fail2skip; complete browser/pageErrors[] and16focused gates pass. Phase15 Release, refs and local EXEs preserved. Phase17 complete: local Windowsx64 candidate dist/dev-4/MagpieFilter.exe built from1fbc046, standalone/full packaged browser/owned consent acceptance passes. Old EXEs/refs preserved; unsigned local candidate only, no push or Release change. Await user testing.
+Phase16 complete: combined smooth curves, pointer-near tooltip with retained bottom detail, horizontal distributions and240px precision tables verified. Every item committed locally after review. Full445total443pass0fail2skip; complete browser/pageErrors[] and16focused gates pass. Phase15 Release, refs and local EXEs preserved. Phase17 complete: local Windowsx64 candidate dist/dev-4/MagpieFilter.exe built from1fbc046, standalone/full packaged browser/owned consent acceptance passes. Old EXEs/refs preserved; unsigned local candidate only, no push or Release change. Phase18 approved: native legend display toggles on both trend charts; retain selection across polls/navigation, visible-only tooltip and complete bottom/table values, unchanged scale, all-off hint. Legend sourceTDD/full446total444pass2skip/browser/reviewcomplete; featurelocalcommit thenfreshdev-5 packaged startup/assets/legendtouch acceptance, preservingdev-4.
 
 ## Current Phase
-Phase 17
+Phase 18
 
 ## Phases
 
@@ -110,3 +110,11 @@ Phase 17
 - Record output/hash/limits, then hand off the local candidate; no push/tag/Release change.
 
 - Phase17 acceptance:90313216bytes SHA256ea55beed8ab20ac3a2fe493c42a8c12f5ba2cc958f26e29672c11d106514a12c; Node24.12.0 package0.1.0-dev.1 native0.1.0.0 NotSigned. Build/identity/manifest11focusedpass; standalone lifecycle/assets/portable/restoration and full packaged browser chartflags/pageErrors[] pass. Owned consent cancellation/termination/restoration pass; independent build-record review approved. No real-provider calls or userprocess actions.
+
+### Phase 18: Trend legend visibility switches
+**Status:** in_progress
+- Approved bounded design: native toggle buttons with aria-pressed, grey/struck-out hidden legends; hide corresponding curves/fill/markers, tooltipvisible-only while bottom/table stayscomplete; fixedoriginalscale. Page-session only, polling/navigation retain; reloadresetsallvisible; allofflegendstilloperable; keyboard/touchsupported.
+- TDD actual browser/state checks; refreshmanifest, focused/full suites, isolatedmobile/keyboard/poll acceptance, independentreview andlocal featurecommit.
+- Build freshdist/dev-5 from reviewedsource, packaged startup/fullbrowser acceptance, hashes/preservation andlocal recordcommit; no push/tag/version/configchange or oldEXE overwrite.
+
+- Phase18 featuregatecomplete: focused17pass,full446total444pass0fail2skip156774ms,completebrowserlegendVisibility/allchartflags true/pageErrors[],4width/nativelegendtouch/focusretention pass. Independent reviewapproved. NewlocalEXEbuild/handoff stillpending.

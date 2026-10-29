@@ -47,7 +47,8 @@ async (page, {screenshots = '.verification/task-4-browser', only} = {}) => {
   if (!only || only === 'navigation') {
     await go('dashboard');
     check(await page.locator('#connection-form').isHidden() && await page.locator('#delivery-mode').isHidden(), 'Home must show charts/core only, not other settings');
-    check(await page.locator('#page-dashboard input, #page-dashboard select, #page-dashboard button').count() === 2, 'Home must contain only gateway/core switches');
+    check(await page.locator('#page-dashboard input, #page-dashboard select, #page-dashboard button:not(.legend-toggle)').count() === 2, 'Home settings must remain limited to gateway/core switches');
+    check(await page.locator('#page-dashboard .chart-legend button.legend-toggle').count() === 7, 'Home charts must expose their seven legend switches');
     await go('settings');
     for (const id of ['connection-form', 'web-form', 'modes', 'delivery-mode', 'exit']) check(await page.locator('#' + id).isVisible(), 'Settings control missing: ' + id);
     await page.locator('nav a[href="/?page=records"]').click(); await visiblePage('records');
@@ -165,6 +166,38 @@ async (page, {screenshots = '.verification/task-4-browser', only} = {}) => {
     });
     await page.reload(); await page.locator('#controls').waitFor({state: 'visible'});
     check(await page.locator('#daily-started').textContent() === '5', 'Daily metrics must not use proxy stats');
+    check(await page.locator('#request-chart .chart-legend button').count() === 5 && await page.locator('#token-chart .chart-legend button').count() === 2, 'Trend legends must be operable per-series buttons');
+    const requestKeys = ['success', 'failed', 'canceled', 'unavailable', 'retries'];
+    const legendButton = (id, key) => page.locator('#' + id + ' .chart-legend button[data-series="' + key + '"]');
+    const originalScale = await page.locator('#request-chart .chart-axis').evaluateAll(nodes => nodes.map(el => el.getAttribute('y1')).join(','));
+    for (const key of requestKeys) {
+      await legendButton('request-chart', key).click();
+      check(await legendButton('request-chart', key).getAttribute('aria-pressed') === 'false', 'Legend must report hidden state: ' + key);
+      check(await page.locator('#request-chart svg [data-series="' + key + '"]').count() === 0, 'Legend must hide every segment: ' + key);
+      check(await legendButton('request-chart', key).evaluate(el => getComputedStyle(el).textDecorationLine.includes('line-through') && getComputedStyle(el.querySelector('.legend-swatch')).color === getComputedStyle(el).color && el.getBoundingClientRect().height >= 44), 'Hidden legends need grey swatches, strike-through and touch target: ' + key);
+      await legendButton('request-chart', key).click();
+      check(await page.locator('#request-chart svg [data-series="' + key + '"]').count() > 0, 'Second click must restore segments: ' + key);
+    }
+    await legendButton('request-chart', 'failed').click(); await page.waitForTimeout(1700);
+    check(await legendButton('request-chart', 'failed').getAttribute('aria-pressed') === 'false', 'Polling must retain hidden series');
+    check(await legendButton('request-chart', 'failed').evaluate(el => el === document.activeElement), 'Polling must retain legend keyboard focus');
+    check(await page.locator('#request-chart .chart-axis').evaluateAll(nodes => nodes.map(el => el.getAttribute('y1')).join(',')) === originalScale, 'Legend changes must not alter the count scale');
+    await go('help'); await go('dashboard');
+    check(await legendButton('request-chart', 'failed').getAttribute('aria-pressed') === 'false', 'Navigation must retain legend selection');
+    const exactRequestRows = await page.locator('#request-series-rows').textContent();
+    for (const key of requestKeys) if (await legendButton('request-chart', key).getAttribute('aria-pressed') === 'true') await legendButton('request-chart', key).click();
+    check(await page.locator('#request-chart .chart-line, #request-chart .chart-point, #request-chart .chart-area').count() === 0, 'All series may be hidden without deleting the chart');
+    check((await page.locator('#request-chart svg').textContent()).includes('全部曲线已关闭'), 'All-hidden chart needs a clear state');
+    await hoverMinute('request-chart', 1);
+    check(await page.locator('#request-chart .chart-tooltip div').count() === 0 && (await page.locator('#request-chart .chart-tooltip').textContent()).includes('已关闭全部曲线'), 'All-hidden tooltip must not show hidden series');
+    check((await page.locator('#request-chart-detail').textContent()).includes('失败：0') && await page.locator('#request-series-rows').textContent() === exactRequestRows, 'Hidden curves must not remove bottom or exact data');
+    injected = {...snapshot, series: []}; await page.waitForFunction(() => !document.querySelector('#request-chart svg'));
+    check(await page.locator('#request-chart .chart-legend button').count() === 5, 'Empty observations must not remove legend controls');
+    await legendButton('request-chart', 'success').click();
+    injected = snapshot; await page.locator('#request-chart svg [data-series="success"]').first().waitFor({state: 'attached'});
+    await page.locator('#request-chart .chart-point.color-0').first().waitFor();
+    check(await legendButton('request-chart', 'failed').getAttribute('aria-pressed') === 'false', 'Data replacement must retain independent selections');
+    for (const key of requestKeys) if (await legendButton('request-chart', key).getAttribute('aria-pressed') === 'false') await legendButton('request-chart', key).click();
     check((await page.locator('#ttfb-summary').textContent()).includes('500 ms'), 'TTFB mean must derive from observed sum/count');
     check((await page.locator('#duration-summary').textContent()).includes('2,000 ms'), 'Duration mean incorrect');
     check(await page.locator('#ttfb-chart .distribution-row').count() === 8, 'Horizontal histogram must render all eight observed bins');
@@ -216,11 +249,11 @@ async (page, {screenshots = '.verification/task-4-browser', only} = {}) => {
     await page.locator('#token-chart .chart-overlay').dispatchEvent('pointerdown', {pointerType: 'touch', clientX: touchBox.x + touchBox.width - 4, clientY: touchBox.y + 20});
     check(await page.locator('#token-chart .chart-tooltip').isVisible(), 'Touch must inspect minute values');
     injected = {...snapshot, series: [0, 1, 2].map((i) => ({minute: minute - (2 - i) * 60000, success: [0, 3, 0][i], failed: [1, 0, 1][i], canceled: 0, unavailable: 0, retries: [0, 3, 0][i], inputTokens: [0, 20, 10][i], outputTokens: [0, 5, 2][i]}))};
-    await page.waitForFunction(() => document.querySelector('#request-chart [data-series="success"]').getAttribute('d').includes(' C'));
+    await page.waitForFunction(() => document.querySelector('#request-chart svg [data-series="success"]')?.getAttribute('d')?.includes(' C'));
     const sharedScale = await page.locator('#request-chart').evaluate(el => {
       const paths = [...el.querySelectorAll('.chart-line')];
-      return paths.length === 5 && !el.querySelector('[data-series="started"]') && paths.every(path => path.getAttribute('d').includes(' C'))
-        && el.querySelector('[data-series="success"]').getAttribute('d') === el.querySelector('[data-series="retries"]').getAttribute('d');
+      return paths.length === 5 && !el.querySelector('svg [data-series="started"]') && paths.every(path => path.getAttribute('d').includes(' C'))
+        && el.querySelector('svg [data-series="success"]').getAttribute('d') === el.querySelector('svg [data-series="retries"]').getAttribute('d');
     });
     check(sharedScale, 'Five result/retry curves must share a linear scale and preserve common endpoints');
     await hoverMinute('token-chart', 0);
@@ -228,6 +261,25 @@ async (page, {screenshots = '.verification/task-4-browser', only} = {}) => {
     await hoverMinute('token-chart', 1);
     check((await page.locator('#token-chart-detail').textContent()).includes('输入 Token：10'), 'Curve tooltip must report measured endpoint, not interpolation');
     result.combinedSmoothSharedScale = true;
+    await legendButton('token-chart', 'inputTokens').click();
+    check(await page.locator('#token-chart svg [data-series="inputTokens"], #token-chart .chart-area').count() === 0 && await page.locator('#token-chart svg [data-series="outputTokens"]').count() > 0, 'Token legend must hide its curve and fill without hiding the other series');
+    await hoverMinute('token-chart', 1);
+    check(await page.locator('#token-chart .chart-tooltip div').count() === 1 && !(await page.locator('#token-chart .chart-tooltip').textContent()).includes('输入 Token'), 'Tooltip must show only enabled series');
+    check((await page.locator('#token-chart-detail').textContent()).includes('输入 Token：10') && await page.locator('#token-chart .chart-marker').count() === 1 && await page.locator('#token-chart .chart-marker.color-1').count() === 1, 'Bottom retains full values while only enabled markers keep their original colors');
+    await legendButton('token-chart', 'inputTokens').focus();
+    const selectedMinute = await page.locator('#token-chart-detail').textContent(); await page.keyboard.press('ArrowLeft');
+    check(await page.locator('#token-chart-detail').textContent() === selectedMinute, 'Legend arrow keys cannot change inspected time');
+    await page.keyboard.press('Space'); check(await page.locator('#token-chart .chart-area').count() === 1, 'Space must enable the Token series');
+    await page.keyboard.press('Enter'); check(await page.locator('#token-chart .chart-area').count() === 0, 'Enter must disable the Token series');
+    await legendButton('token-chart', 'outputTokens').click();
+    await hoverMinute('token-chart', 1);
+    check(await page.locator('#token-chart .chart-marker').count() === 0 && await page.locator('#token-chart .chart-tooltip div').count() === 0, 'All-hidden Token chart has no measured markers or series rows');
+    await legendButton('token-chart', 'outputTokens').locator('.legend-swatch').click();
+    check(await legendButton('token-chart', 'outputTokens').getAttribute('aria-pressed') === 'true', 'Clicking a swatch must enable its series');
+    await page.reload(); await page.locator('#controls').waitFor({state: 'visible'});
+    check(await page.locator('.chart-legend button[aria-pressed="true"]').count() === 7, 'Reload must reset all series to visible without persisting chart preferences');
+    await hoverMinute('token-chart', 1);
+    result.legendVisibility = true;
     injected = {...snapshot, series: [{minute: minute + 60000, inputTokens: 7, outputTokens: 2}]};
     await page.waitForFunction(() => document.getElementById('token-chart-detail').textContent.includes('已移出'));
     await hoverMinute('token-chart', .5);

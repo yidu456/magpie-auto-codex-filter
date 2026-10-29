@@ -79,3 +79,11 @@ test('error ranking sorts measured occurrences and bounds untrusted labels', () 
  assert.equal(rankedErrors(null).length,0);assert.equal(rankedErrors({zero:0}).length,0);
  assert(rankedErrors({['x'.repeat(1000)]:1})[0].label.length<=80);
 });
+
+test('legend switches use native buttons, pressed state and a non-color hidden indicator', () => {
+  const app = fs.readFileSync(path.join(__dirname, 'ui/app.js'), 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, 'ui/app.css'), 'utf8');
+  assert.ok(app.includes("document.createElement('button')"), 'Legends must be native buttons');
+  assert.ok(app.includes("setAttribute('aria-pressed'"), 'Legend state must be accessible');
+  assert.ok(css.includes('text-decoration:line-through'), 'Hidden series need a non-color indicator');
+});
