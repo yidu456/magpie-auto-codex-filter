@@ -4,10 +4,10 @@
 Preserve the completed dev console and adapt selected V11 capabilities on dev-2, with a verified commit per step.
 
 ## Next Step
-Phase13 complete: Task4 release workflow544340d and Task5 docs95cca81 reviewed, whole-change review approved with no actionable findings. Stable final suite419pass/2nativeUnixskip plus isolated extracted Windows acceptance passed. Keep dev-2 local/unmerged and dev-3 candidate available. Native Unix CI, remote publishing and real-client migration await separate user authorization.
+Phase14: repair57cb5d0 passed all four native suites/builds/extracted smokes/consent. Run40813226587 failed only macOSx64 CreateArtifact after five network timeouts. Record evidence and source-only docs push to retry hosted delivery; no application/workflow patch for a transient network error. Interrupted local full suite has no final result; rerun it. Preserve existing v0.1.0-dev/main and delivered binaries.
 
 ## Current Phase
-Phase 13
+Phase 14
 
 ## Phases
 
@@ -75,3 +75,10 @@ Phase 13
 - Proposed Windowsx64/macOSarm64+x64/Linuxx64, embedded runtime, v* tag releases; identity revalidation, no silent privilege escalation/critical-process termination/recovery bypass.
 - User approved with continue on2026-10-28. Plan: docs/superpowers/plans/2026-10-28-port-takeover-release.md. Native macOS/Linux CI execution and remote release remain unperformed.
 - Completed on2026-10-29: all eight tasks and independent final review approved; exact Windows candidate/archive hashes and limits in docs/verification-phase13.md. No user process/configuration or delivered binary was changed during final workflow/docs work.
+
+### Phase 14: Hosted CI compatibility fixes
+**Status:** in_progress
+- User authorized source push to yidu456, followed by fixing the failed hosted run. Branch dev-2 and v0.1.0-dev now exist at e6a1230; main unchanged. No Release exists.
+- Diagnose all four native jobs from retained logs. Windows mismatch reproduced exactly by LF-to-CRLF conversion; Unix inspection/termination and browser shutdown assertions need focused regression coverage.
+- Keep strict checksums and pre-termination safety gates, macOS display-only behavior, bounded waiting and complete native tests. Do not skip failures, elevate privileges or alter user processes/configurations.
+- Fix and verify scoped code/tests/manifest, independent review, then source-only branch CI validation. Preserve v0.1.0-dev and delivered dev2/dev3 binaries; no local rebuild or new release until native CI passes.

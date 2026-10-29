@@ -155,7 +155,7 @@ Linux/macOS 使用同样的安装、测试、构建和打包步骤，以 `root="
 
 ## CI 产物与版本发布
 
-`.github/workflows/windows-build.yml` 在推送 `dev` / `dev-2` 或手工 `workflow_dispatch` 时只构建和上传本次运行的四个平台 artifact，**不会创建 Release**。推送已有且格式合法的 `vMAJOR.MINOR.PATCH[-prerelease]` tag 才会在四个原生 job 全部通过后进入发布；没有 pull request 发布入口。此次没有 push/tag/dispatch，macOS/Linux 原生构建、原生 smoke 和远程发布均尚未执行，不能据此声称这些平台已经验证。
+`.github/workflows/windows-build.yml` 在推送 `dev` / `dev-2` 或手工 `workflow_dispatch` 时只构建和上传本次运行的四个平台 artifact，**不会创建 Release**。推送已有且格式合法的 `vMAJOR.MINOR.PATCH[-prerelease]` tag 才会在四个原生 job 全部通过后进入发布；没有 pull request 发布入口。2026-10-29 的修复提交 `57cb5d0` 已在四个目标上通过原生测试、构建、打包及解压后 smoke/端口确认；该轮 macOS x64 最后的 artifact 上传因 GitHub CreateArtifact 网络超时失败，仍不能声称整轮交付或 Release 已成功。源码修复与验证边界见 [Phase 14 验证记录](docs/verification-phase14.md)；本地 `dist/dev-3` 是此前保留的候选，不包含此次 CI 修复。
 
 Release 精确包含八个资产：四个上述原生归档、`MagpieFilter.exe`、`LICENSE.txt`、`NODE-LICENSE.txt`、聚合 `SHA256SUMS.txt`。其中聚合清单精确校验前七项；工作流不会上传整个 `dist`、配置或运行状态。分支/手工运行下载 artifact 时，各目标仅含自己的归档和外部 `SHA256SUMS.txt`，它不是 GitHub Release。
 
