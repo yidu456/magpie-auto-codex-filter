@@ -4,7 +4,7 @@
 Preserve the completed dev console and adapt selected V11 capabilities on dev-2, with a verified commit per step.
 
 ## Next Step
-Phase16 approved: implement combined smooth request/Token curves, pointer-near tooltip plus retained bottom detail, horizontal distributions and fixed240px precision tables. Sequential reviewed local commit per item; detailed checklist in docs/superpowers/plans/2026-10-29-chart-improvements.md. Phase15 Release, refs and local EXEs preserved. Task0/Task1 complete and verified; next Task2 pointer-position popover plus retained bottom detail.
+Phase16 approved: implement combined smooth request/Token curves, pointer-near tooltip plus retained bottom detail, horizontal distributions and fixed240px precision tables. Sequential reviewed local commit per item; detailed checklist in docs/superpowers/plans/2026-10-29-chart-improvements.md. Phase15 Release, refs and local EXEs preserved. Task0/Task1/Task2 complete and verified; next Task3 horizontal distributions and240px precision tables.
 
 ## Current Phase
 Phase 16

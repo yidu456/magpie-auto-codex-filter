@@ -45,10 +45,10 @@
 **Files:** console/ui/app.js, console/ui/app.css, console/charts.test.cjs, scripts/browser-smoke.js, SHA256SUMS.txt.
 **Interfaces:** trend uses one transparent plot overlay and a per-container tooltip; pure minute lookup/tooltip placement helpers are directly tested. Keyboard left/right selects real minute, Escape dismisses popover. Poll/redraw must not leak handlers or destroy active selection unnecessarily.
 
-- [ ] Add failing unit/fixture checks: pointer-to-minute mapping including gaps/single bucket, exact zero/null formatting, tooltip clamping at all chart edges and old snapshot replacement.
-- [ ] Implement pointer-near tooltip with all series rows, guide and measured markers; update bottom selection at the same time. Safe text nodes only. Leave hides popover, touch/keyboard inspect values.
-- [ ] Verify focused tests plus isolated browser hover at left/right/zero/missing/empty, tooltip geometry, retained bottom text and keyboard/mobile behavior. Refresh manifest.
-- [ ] Review, update bookkeeping and commit feat: show chart details at pointer time.
+- [x] Add failing unit/fixture checks: pointer-to-minute mapping including gaps/single bucket, exact zero/null formatting, tooltip clamping at all chart edges and old snapshot replacement.
+- [x] Implement pointer-near tooltip with all series rows, guide and measured markers; update bottom selection at the same time. Safe text nodes only. Leave hides popover, touch/keyboard inspect values.
+- [x] Verify focused tests plus isolated browser hover at left/right/zero/missing/empty, tooltip geometry, retained bottom text and keyboard/mobile behavior. Refresh manifest.
+- [x] Review, update bookkeeping and commit feat: show chart details at pointer time.
 
 ## Task 3: Distributions And Fixed Precision Tables
 

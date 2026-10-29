@@ -7,7 +7,7 @@ const vm = require('node:vm');
 function helpers() {
   const source = fs.readFileSync(path.join(__dirname, 'ui/app.js'), 'utf8');
   return vm.runInNewContext(source.slice(source.indexOf('const finite ='), source.indexOf('function records('))
-    + '\n({chartSegments, smoothPath})');
+    + '\n({chartSegments, smoothPath, chartMinute, minuteDetails, tooltipPosition})');
 }
 test('trend segments retain zero and break at missing values/minutes or out-of-order times', () => {
   const {chartSegments} = helpers();
@@ -43,4 +43,25 @@ test('combined trend panels expose deep colors, line styles and readable indepen
   assert.match(css, /\.chart-legend\{/);
   assert.match(html, /class="panel trend-panel" aria-labelledby="request-chart-title"/);
   assert.match(html, /class="panel trend-panel" aria-labelledby="tokens-title"/);
+});
+
+test('pointer maps to exact minute, not the nearest observed bucket', () => {
+ const {chartMinute,minuteDetails}=helpers(), fields=[['inputTokens','input'],['outputTokens','output']];
+ const series=[{minute:0,inputTokens:0,outputTokens:null},{minute:120000,inputTokens:12,outputTokens:4}];
+ assert.equal(chartMinute(series,0,0,200),0); assert.equal(chartMinute(series,100,0,200),60000);
+ assert.equal(chartMinute(series,250,0,200),120000); assert.equal(chartMinute([series[1]],0,0,200),120000);
+ assert.equal(chartMinute([],0,0,200),null);
+ assert.equal(minuteDetails(series,0,fields).rows[0][1],'0');
+ assert.equal(minuteDetails(series,0,fields).rows[1][1],'未观测');
+ assert.match(minuteDetails(series,60000,fields).message,/无该分钟观测/);
+ assert.equal(minuteDetails([{...series[0],inputTokens:9}],0,fields).rows[0][1],'9');
+ assert.match(minuteDetails([series[1]],0,fields).message,/已移出/);
+});
+test('tooltip flips and clamps at all chart edges', () => {
+ const {tooltipPosition}=helpers();
+ for(const x of [0,100,300])for(const y of [0,100,340]){
+  const p=tooltipPosition(x,y,320,360,180,140);
+  assert(p.left>=8 && p.left+180<=312);assert(p.top>=8 && p.top+140<=352);
+ }
+ const p=tooltipPosition(300,340,320,360,180,140);assert(p.left<300 && p.top<340);
 });

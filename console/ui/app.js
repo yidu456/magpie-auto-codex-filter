@@ -131,10 +131,74 @@ function smoothPath(points) {
   return path;
 }
 const trendViews = new Map();
+function chartMinute(series, position, left, right) {
+  if (!series.length) return null;
+  const first = series[0].minute, last = series.at(-1).minute;
+  const ratio = right > left ? Math.max(0, Math.min(1, (position - left) / (right - left))) : 0;
+  return first + Math.round((last - first) * ratio / 60000) * 60000;
+}
+function minuteDetails(series, minute, fields) {
+  const bucket = series.find(row => row.minute === minute);
+  const outside = series.length && (minute < series[0].minute || minute > series.at(-1).minute);
+  return {bucket, message: bucket ? '' : outside ? '该分钟已移出观测窗口。' : '无该分钟观测；不借用相邻数据。',
+    rows: fields.map(([key, name]) => [name, number(bucket?.[key], '未观测')])};
+}
+function tooltipPosition(x, y, width, height, boxWidth, boxHeight) {
+  return {left: Math.max(8, Math.min(width - boxWidth - 8, x + 12 + boxWidth <= width - 8 ? x + 12 : x - boxWidth - 12)),
+    top: Math.max(8, Math.min(height - boxHeight - 8, y + 12 + boxHeight <= height - 8 ? y + 12 : y - boxHeight - 12))};
+}
+function inspectTrend(id, view) {
+  const {detail, tooltip, guide, series, fields} = view;
+  if (!detail) return;
+  if (view.minute === undefined) { detail.textContent = '悬停或轻触曲线查看分钟值；聚焦后用左右方向键选择，Esc 收起浮层。'; return; }
+  const data = minuteDetails(series, view.minute, fields), title = time(view.minute).slice(0, 5);
+  detail.textContent = title + ' · ' + (data.message || data.rows.map(([name, value]) => name + '：' + value).join(' · '));
+  if (!tooltip) return;
+  tooltip.hidden = !view.inspect; guide.replaceChildren();
+  if (!view.inspect) return;
+  const heading = document.createElement('strong'); heading.textContent = title + ' / 分钟观测';
+  tooltip.replaceChildren(heading);
+  if (data.message) { const text = document.createElement('p'); text.textContent = data.message; tooltip.append(text); }
+  for (const [index, [name, value]] of data.rows.entries()) {
+    const row = document.createElement('div'), label = document.createElement('span'), amount = document.createElement('b');
+    label.className = 'color-' + index; label.textContent = name; amount.textContent = value; row.append(label, amount); tooltip.append(row);
+  }
+  if (view.minute >= series[0].minute && view.minute <= series.at(-1).minute) {
+    const x = view.x(view.minute);
+    guide.append(svgElement('line', {x1: x, x2: x, y1: view.top, y2: view.bottom, class: 'chart-guide'}));
+    fields.forEach(([key], index) => { if (finite(data.bucket?.[key])) guide.append(svgElement('circle', {cx: x, cy: view.y(data.bucket[key]), r: 4, class: 'chart-marker color-' + index})); });
+  }
+  const box = tooltip.getBoundingClientRect(), container = $(id);
+  const position = tooltipPosition(view.anchor.x, view.anchor.y, container.clientWidth, container.clientHeight, box.width, box.height);
+  tooltip.style.left = position.left + 'px'; tooltip.style.top = position.top + 'px';
+}
 function trend(id, series, fields) {
   let view = trendViews.get(id);
   if (!view) {
     view = {}; trendViews.set(id, view);
+    const container = $(id); container.tabIndex = 0; container.setAttribute('role', 'group');
+    container.setAttribute('aria-label', '分钟趋势；左右方向键查看精确数据'); container.setAttribute('aria-describedby', id + '-detail');
+    const hide = () => { view.inspect = false; inspectTrend(id, view); };
+    const pointer = event => {
+      if (!view.svg || !view.series.length) return;
+      const svg = view.svg.getBoundingClientRect(), x = event.clientX - svg.left, y = event.clientY - svg.top;
+      if (x < view.left || x > view.right || y < view.top || y > view.bottom) { hide(); return; }
+      const box = container.getBoundingClientRect();
+      view.minute = chartMinute(view.series, x, view.left + 4, view.right - 4);
+      view.anchor = {x: event.clientX - box.left, y: event.clientY - box.top}; view.inspect = true; inspectTrend(id, view);
+    };
+    container.addEventListener('pointermove', pointer); container.addEventListener('pointerdown', pointer);
+    container.addEventListener('pointerleave', hide); container.addEventListener('blur', hide);
+    container.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { hide(); return; }
+      if (!['ArrowLeft', 'ArrowRight'].includes(event.key) || !view.series.length || !view.svg) return;
+      event.preventDefault();
+      const index = view.series.findIndex(row => row.minute === view.minute);
+      const next = index < 0 ? event.key === 'ArrowLeft' ? view.series.length - 1 : 0 : Math.max(0, Math.min(view.series.length - 1, index + (event.key === 'ArrowRight' ? 1 : -1)));
+      view.minute = view.series[next].minute;
+      const svg = view.svg.getBoundingClientRect(), box = container.getBoundingClientRect();
+      view.anchor = {x: view.x(view.minute), y: svg.top - box.top + view.top}; view.inspect = true; inspectTrend(id, view);
+    });
     view.observer = new ResizeObserver(() => { if (view.series) drawTrend(id, view); });
     view.observer.observe($(id));
   }
@@ -143,7 +207,10 @@ function trend(id, series, fields) {
 function drawTrend(id, view) {
   const {series, fields} = view;
   if (!series.length || !series.some(bucket => fields.some(([key]) => finite(bucket[key])))) {
-    emptyChart(id, '暂无可用分钟观测；不会补造缺失数据。'); return;
+    emptyChart(id, '暂无可用分钟观测；不会补造缺失数据。');
+    view.svg = view.tooltip = null; view.inspect = false;
+    view.detail = document.createElement('p'); view.detail.id = id + '-detail'; view.detail.className = 'chart-detail';
+    $(id).append(view.detail); inspectTrend(id, view); return;
   }
   const width = $(id).clientWidth; if (!width) return;
   const height = 290, left = 52, right = width - 14, top = 30, bottom = 248;
@@ -180,7 +247,11 @@ function drawTrend(id, view) {
     svg.append(svgElement('text', {x: x(minute), y: 274, 'text-anchor': tickCount === 1 ? 'middle' : !i ? 'start' : i === tickCount - 1 ? 'end' : 'middle', class: 'chart-label'}, time(minute).slice(0, 5)));
   }
   const detail = document.createElement('p'); detail.id = id + '-detail'; detail.className = 'chart-detail';
-  detail.textContent = '分钟值见精确数据表；平滑曲线仅用于连接观测。'; $(id).append(detail);
+  detail.setAttribute('aria-live', 'polite');
+  const guide = svgElement('g', {'aria-hidden': 'true'}), overlay = svgElement('rect', {x: left, y: top, width: right - left, height: bottom - top, class: 'chart-overlay'});
+  const tooltip = document.createElement('div'); tooltip.className = 'chart-tooltip'; tooltip.hidden = true; tooltip.setAttribute('aria-hidden', 'true');
+  svg.append(guide, overlay); $(id).append(tooltip, detail);
+  Object.assign(view, {svg, detail, guide, tooltip, x, y, left, right, top, bottom}); inspectTrend(id, view);
 }
 function histogram(id, histogram) {
   const valid = histogram && finite(histogram.count) && histogram.count > 0 && finite(histogram.sumMs)

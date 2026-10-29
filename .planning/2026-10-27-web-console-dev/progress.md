@@ -108,3 +108,9 @@
 - Phase16 Task1 full isolated browser harness passed all cases/pageErrors[] before interruption; fresh resumed focused11/11 and diff check pass at unchanged public bytes. Existing reviewer followup resumed; pending review/commit.
 
 - Phase16 Task1 independent review approved no actionable findings; reviewer independently ran11focused and inspected320request/desktopToken screenshots. Full isolated harness passed all cases/pageErrors[]. Task1 local commit now; next Task2.
+
+- Phase16 Task1 committedca2ec02. Task2 expected RED observed: chartMinute missing in unit export, browser missing inspection overlay. Implemented exact-minute lookup/edge placement, stable-container delegated pointer/keyboard handlers, safe tooltip and bottom detail, retained selection refreshed against current snapshot. Expanded isolated smoke; metrics-only old scroll setup now explicitly390px. D runtime bundle absent; actual bundled Playwright remains C path. Gates pending.
+
+- Phase16 Task2 focused13/13 and initial expanded metrics browser smoke pass/pageErrors[]. Private native touchscreen and48edge hover assertions across1280/736/390/320 pass; reviewed320request tooltip+retained bottom. Added final single-minute/stale-window/empty replacement browser cases; final gates/review pending.
+
+- Phase16 Task2 final expanded metrics smoke passed including polling focus/zero,null/gap,single bucket,stale-window and emptyreplacement; pageErrors[]. Fresh13focused/strictmanifest and diff check pass. Independent review approved no actionable findings, reviewer independently13pass. Local Task2 commit then Task3.
