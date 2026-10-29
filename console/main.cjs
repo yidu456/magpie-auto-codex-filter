@@ -104,7 +104,6 @@ async function main(args = process.argv.slice(2)) {
         const owner = readJson(ownerFile), record = readJson(stateFile);
         const token = record?.authEnabled === false ? undefined : record?.token || readJson(options.configFile)?.web?.token;
         if (owner && record?.instance === owner.instance && record.pid === owner.pid && await verifyRunning(record, token)) {
-          if (options.open) await openConsole(record, token, options.configFile, stateFile);
           console.log('Console already running at ' + record.origin);
           return {reused: true, origin: record.origin};
         }

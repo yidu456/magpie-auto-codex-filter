@@ -47,8 +47,8 @@ function readRecord(runtime) {
 }
 async function quit(record) {
   const headers = {'content-type': 'application/json', ...(record.token ? {'x-console-token': record.token} : {})};
-  const state = JSON.parse((await call(record.origin, '/api/state', {method: 'GET', headers})).body);
-  return call(record.origin, '/api/exit', {headers, body: JSON.stringify({revision: state.revision})});
+  const state = JSON.parse((await call(record.origin, '/api/state', {method: 'GET', headers, agent: false})).body);
+  return call(record.origin, '/api/exit', {headers, agent: false, body: JSON.stringify({revision: state.revision})});
 }
 
 test('actual launcher exit bounds its own speculative idle management TCP connections', {timeout: 12000}, async t => {
@@ -331,6 +331,37 @@ test('singleton verifier uses active mode, protects missing flags, and rejects m
   assert.equal(headers.at(-1)['x-console-token'], 'cd'.repeat(32));
   for (const authEnabled of ['false', null, 0]) assert.equal(await verifyRunning({...record, authEnabled}, 'cd'.repeat(32)), false);
 });
+
+for (const authEnabled of [false, true]) for (const open of [true, false]) {
+  test(`launcher opens browser once per service startup with auth ${authEnabled} and open ${open}`, {timeout: 15000}, async t => {
+    const runtime = await portableFixture(t, authEnabled), urls = [];
+    const context = {module: {exports: {}}, __dirname, process, Buffer, URL, setTimeout, clearTimeout,
+      console: {log() {}, error() {}},
+      require: name => name === './browser.cjs' ? {openBrowser: async url => { urls.push(url); }} : require(name)};
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'main.cjs'), 'utf8'), context);
+    const launch = context.module.exports.main, args = ['--runtime', runtime, ...(open ? [] : ['--no-open'])];
+    let record;
+    t.after(async () => { if (record) { await quit(record); await waitFor(() => !fs.existsSync(path.join(runtime, 'instance.lock'))); } });
+    assert.equal((await launch(args)).reused, false);
+    record = JSON.parse(fs.readFileSync(path.join(runtime, 'service.json')));
+    const files = ['MagpieFilter.config.json', 'service.json', 'instance.lock/owner.json'];
+    const before = files.map(file => fs.readFileSync(path.join(runtime, file)));
+    assert.deepEqual(urls, open ? [record.origin + '/' + (authEnabled ? '#token=' + record.token : '')] : []);
+    const duplicates = await Promise.all(Array.from({length: 3}, () => launch(['--runtime', runtime])));
+    assert.ok(duplicates.every(result => result.reused && result.origin === record.origin));
+    for (let i = 0; i < 3; i++) assert.equal((await call(record.origin, '/api/state', {method: 'GET',
+      headers: authEnabled ? {'x-console-token': record.token} : {}})).status, 200);
+    assert.equal(urls.length, open ? 1 : 0, 'Duplicate launches and polling must not dispatch a browser');
+    files.forEach((file, index) => assert.deepEqual(fs.readFileSync(path.join(runtime, file)), before[index]));
+    const previousInstance = record.instance;
+    assert.equal((await quit(record)).status, 200);
+    await waitFor(() => !fs.existsSync(path.join(runtime, 'instance.lock'))); record = null;
+    assert.equal((await launch(args)).reused, false);
+    record = JSON.parse(fs.readFileSync(path.join(runtime, 'service.json')));
+    assert.notEqual(record.instance, previousInstance);
+    assert.equal(urls.length, open ? 2 : 0, 'A genuine service restart gets one fresh browser dispatch');
+  });
+}
 
 test('console browser URL includes fragment only for protected active or legacy records', async () => {
   const urls = [], context = {module: {exports: {}}, __dirname, process, Buffer, URL,
