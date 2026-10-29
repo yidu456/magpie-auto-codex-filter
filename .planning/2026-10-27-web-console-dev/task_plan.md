@@ -4,10 +4,10 @@
 Preserve the completed dev console and adapt selected V11 capabilities on dev-2, with a verified commit per step.
 
 ## Next Step
-Phase16 complete: combined smooth curves, pointer-near tooltip with retained bottom detail, horizontal distributions and240px precision tables verified. Every item committed locally after review. Full445total443pass0fail2skip; complete browser/pageErrors[] and16focused gates pass. Phase15 Release, refs and local EXEs preserved. Phase17 complete: local Windowsx64 candidate dist/dev-4/MagpieFilter.exe built from1fbc046, standalone/full packaged browser/owned consent acceptance passes. Old EXEs/refs preserved; unsigned local candidate only, no push or Release change. Phase18 approved: native legend display toggles on both trend charts; retain selection across polls/navigation, visible-only tooltip and complete bottom/table values, unchanged scale, all-off hint. Legend sourceTDD/full446total444pass2skip/browser/reviewcomplete; featurelocalcommit thenfreshdev-5 packaged startup/assets/legendtouch acceptance, preservingdev-4.
+Phase19 authorized: use verifiedSSHHost/accountyidu456 andrepository-localidentity to push revieweddev-2 source toyidu456/magpie-auto-codex-filter; preservemain/tags/history/EXEs andexcludeallruntimefiles. Phase18 source/packagedacceptancepassed; latercandidateconfig/logprovenanceunconfirmed, preserveunread/untouched andleaveclean-outputrecordpending.
 
 ## Current Phase
-Phase 18
+Phase 19
 
 ## Phases
 
@@ -118,3 +118,9 @@ Phase 18
 - Build freshdist/dev-5 from reviewedsource, packaged startup/fullbrowser acceptance, hashes/preservation andlocal recordcommit; no push/tag/version/configchange or oldEXE overwrite.
 
 - Phase18 featuregatecomplete: focused17pass,full446total444pass0fail2skip156774ms,completebrowserlegendVisibility/allchartflags true/pageErrors[],4width/nativelegendtouch/focusretention pass. Independent reviewapproved. NewlocalEXEbuild/handoff stillpending.
+
+### Phase 19: Owner-authenticated source push
+**Status:** in_progress
+- VerifySSHHostyidu456 authenticatesaccountyidu456; originowner/ref correct; setlocalfuturecommitidentity, neverrewriteexistingauthors.
+- Validate source/manifest andremoteancestry, commitaccuratebookkeeping, fast-forwardpushonlydev-2withfollowTagsdisabled; no main/tag/EXE/runtimeupload.
+- Verifyremotebranchhead andpreservedrefs; CIstartisnotCIcompletion. Keepunconfirmeddev-5runtimefilesunread/untouched.
