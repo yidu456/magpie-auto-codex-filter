@@ -4,10 +4,10 @@
 Preserve the completed dev console and adapt selected V11 capabilities on dev-2, with a verified commit per step.
 
 ## Next Step
-Phase14 repairs complete: a31156b local437total435pass0fail2skip and native40817990959 all four full suite/build/archive/extracted smoke/consent/upload jobs pass. Four downloaded archives pass strict external verification. Final evidence documented and independently approved; preserve main/v0.1.0-dev and delivered EXEs. New version tag/Release remains a separate authorized delivery step, not yet executed.
+Phase15: version/lock/source hashes aligned at0.1.0-dev.1; focused22/22 and fresh full437total435pass0fail2skip158570ms, independent metadata review approved. Commit metadata, create annotated v0.1.0-dev.1 and atomic branch/new-tag push. Verify tag Actions including publish, exact eight Release assets and aggregate checksums. Preserve oldtag/main/local EXEs.
 
 ## Current Phase
-Phase 14
+Phase 15
 
 ## Phases
 
@@ -84,3 +84,10 @@ Phase 14
 - Fix and verify scoped code/tests/manifest, independent review, then source-only branch CI validation. Preserve v0.1.0-dev and delivered dev2/dev3 binaries; no local rebuild or new release until native CI passes.
 
 - Phase14 final acceptance at a31156b: local435pass2skip; Windows hosted435pass2skip, Linux/macOS each432pass5skip, all0fail/437total. Native40817990959 complete success including four uploads; downloaded archives verified. Scoped independent reviews and final evidence-only review approved.
+
+### Phase 15: New prerelease tag and hosted publication
+**Status:** in_progress
+- User authorized new release tag on2026-10-29; selected v0.1.0-dev.1 from the preceding recommendation.
+- Step1: npm version --no-git-tag-version --ignore-scripts updates package.json and package-lock.json; refresh SHA256SUMS.txt. Validate tag/version/lock alignment, native Windows version encoding and full local suite; independent review. No dependency, application or workflow change.
+- Step2: commit metadata on dev-2, verify new tag absent locally/remotely, create annotated tag, atomic push of dev-2 plus the new tag only. Never move old tag/main.
+- Step3: watch tag Actions through four native suite/build/package/extracted smoke/consent/upload jobs and publish; verify non-draft prerelease tag, exact eight assets and published checksums. Retain failed/draft evidence without bypass if any gate fails. No local binary rebuild, real-provider calls or user-process termination.

@@ -86,3 +86,7 @@
 - Native40817990959 at a31156b complete success: all four full suites/builds/packaging/extracted standalone smoke/owned consent/upload pass; publish correctly skipped. Windows437total435pass2skip; Unix each437total432pass5skip; all0fail. Four nonexpired archives downloaded to artifacts-a31156b, verifyArtifacts4/4 passes external inventory/hash checks. Phase14 repair acceptance complete; final docs-only evidence commit pending review. No new tag/Release/main/local EXE mutation.
 
 - Final evidence-only review approved, source manifest3/3 and14-phase plan format validation pass. Runtime/test source stays a31156b; final docs/plan/checksum commit records complete repair acceptance. Publication remains a separate new-tag step; existing tag/main and local deliverables preserved.
+
+- Phase15 started by explicit new-release-tag request. Clean dev-2 at63415b4; local/remote v0.1.0-dev.1 absent, no existing Release, origin yidu456 confirmed. Scope is version/lock/source-hash metadata and new tag-triggered existing publication; old tag/main/EXEs preserved.
+
+- Phase15 Step1 verified: npm-generated package/lock0.1.0-dev.1, strict manifest22focused tests pass; full437total435pass0fail2skip158570ms at stable public bytes. Independent metadata review approved. Prior native package instructions and Unix0755 launcher modes manually inspected read-only; no application/dependency/workflow change. Commit/new annotated tag/atomic push next.
